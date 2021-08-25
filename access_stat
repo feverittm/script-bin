@@ -1,0 +1,267 @@
+#!/usr/local/bin/perl5 -w
+#
+#	$Header:$
+#
+#	"access_stat" created by red
+#       
+#       Description:
+#       Create a window that tracks the last access to a web server.
+#
+#	$Log: Tstatus,v $
+#
+
+use strict;
+use English;
+use Tk;
+use subs qw(handler show_usage update get_stats cleanup_and_die);
+use POSIX qw(strftime);
+
+use vars qw($opt_i $opt_F $opt_l $opt_d $opt_w $opt_u $opt_f $opt_x);
+use Getopt::Std;
+
+my ($Rev, $RunDate, $DirName, $ProgName);
+my (@header_string, @header);
+my (@fields, $job, $status, $queue, $cmdline, $label_string);
+my (@info, $tstats, $machine);
+my ($length, $window, $logfile);
+my ($serv_up, $localhost);
+my $update;
+
+$RunDate = strftime '%Y/%m/%d %H:%M:%S', localtime;
+$Rev = (split(' ', '$Revision: 2 $', 3))[1];
+$0 =~ m!(.*)/!; $ProgName = $'; $DirName = $1; $DirName = '.' unless $DirName;
+
+$SIG{'HUP'} =   \&handler;
+$SIG{'INT'} =   \&handler;
+$SIG{'QUIT'} =  \&handler;
+$SIG{'TERM'} =  \&handler;
+
+sub handler
+{
+    my($sig) = @_;
+    warn "$ProgName:INFO: Caught a SIG$sig -- shutting down\n";
+
+    exit(0);
+}
+
+sub show_usage
+{
+   print "$ProgName:\n";
+   print "   Options:\n";
+   print "   -F            :  Leave in the foreground\n";
+   print "   -f <filename> :  Specify log file to watch (Required!)\n";
+   print "   -d <directory>:  Look in directory for log file.\n";
+   print "    note that '-d' assumes that the log file name is of the\n";
+   print "    form 'access_log.*'.  This option will auto-switch to new\n";
+   print "    logs should they be created while the program is running.\n";
+   print "   -l <lines>    :  Number of lines in the watch window.\n";
+   print "   -u <update>   :  Update time in seconds (default is 30 sec).\n";
+   print "   -w <update>   :  Window update period in number of update \n";
+   print "                    periods (how long is connection active?)\n";
+   print "   -i            :  Ignore Local accessess from this machine\n";
+   print "   -x            :  Verbose degug information.\n";
+   print "\n";
+   print "$ProgName  $Rev\t\t$RunDate\n\n";
+   print "  Put up a small xwindow log to show the status of running\n";
+   print "  apache www server jobs.\n";
+   print "  In the Tstatus window inputing:\n";
+   print "  Control-C  :  Exits the program.\n";
+   print "  Control-Q  :  Exits the program.\n";
+   print "  Control-U  :  Get a stat and update immediately.\n";
+   print "\n";
+   exit 0;
+}
+
+my @SAVEDARGV = @ARGV;		# getopts shifts out ARGV.
+if (&getopts('Fixl:d:f:u:w:') == 0) {
+    &show_usage;
+}
+#print "# $ProgName  $Rev\t\t$RunDate\n\n";
+
+$length=15;
+$length=$opt_l if (defined($opt_l));
+
+unless($opt_u){
+   $update=30000;
+} else {
+   if ( $opt_u !~ /\d+/ ){
+      die "Invalid number specified for the update time: $opt_u\n";
+      }
+   $update=int($opt_u*1000);
+   if ( $update == 0 ) { 
+      print "Bad update time conversion\n";
+   }
+   elsif ($update < 100) {
+      print "Setting update time to minimum of 0.1 seconds\n";
+      $update=100;
+      }
+   else {
+      print "Update time set at ",($update/1000)," seconds\n";
+      }
+}
+
+unless($opt_w){
+   $window=4;
+} else {
+   if ( $opt_u !~ /\d+/ ){
+      die "Invalid number specified for the window time: $opt_w\n";
+      }
+   $window=int($opt_w);
+   if ( $window == 0 ) { 
+      print "Bad window time conversion\n";
+   }
+   elsif ($update < 1) {
+      print "Setting window time to minimum of 1 update period\n";
+      $window=1;
+      }
+   else {
+      print "Window time set at $window update(s)\n";
+      }
+}
+
+if (!defined($opt_f) && !defined($opt_d))
+   { die "You need to specify the logfile or direcory to watch\n"; }
+if (defined($opt_f) && ! -r "$opt_f"){ die "Cannot read log file: $opt_f\n"; }
+if (defined($opt_d) && ! -r "$opt_d"){ die "Cannot read log directory: $opt_d\n"; }
+
+$logfile=$opt_f if (defined($opt_f));
+if (defined($opt_d)){
+   $logfile=`ls -rt $opt_d/access_log.* | tail -1`;
+   if (length($logfile) == 0) { 
+      die "Bad lookup of access filename: $logfile\n";
+   }
+}
+
+$localhost=`hostname`;  chomp $localhost;
+
+&get_stats;
+unless($opt_F){
+   print "Launching: exec nohupd -n $0 @SAVEDARGV\n";
+   exec 'nohupd', '-n', $0, '-F', @SAVEDARGV;
+   die "$ProgName: Error: exec of \"nohupd\" failed: $!\n";
+}
+
+$serv_up = `ps -ef | grep httpd | egrep -v "grep" | wc -l`;
+chomp($serv_up);
+
+my $MW = MainWindow->new;
+$MW->bind('<Control-c>' => \&exit);
+$MW->bind('<Control-q>' => \&exit);
+$MW->bind('<Control-u>' => \&update);
+$MW->title('$localhost Web Server Status');
+$MW->iconname('$localhost Web Server Status');
+
+# Define the header
+my $i=0;
+$header_string[$i++]  = sprintf(" ");
+$header_string[$i++]  = sprintf(" ");
+$header_string[$i++]  = sprintf(" ");
+$header_string[$i++]  = sprintf(" ");
+for($i=0;$i<=$#header_string;$i++){
+   $header[$i] = $MW->Label(-textvariable  => \$header_string[$i]);
+   $header[$i]->pack(-side => 'top');
+}
+
+$tstats = $MW->Label(-textvariable => \$label_string)->pack(-side => 'left');
+
+&update;
+
+sub cleanup_and_die {
+    my $msg=$_[0];
+    close(INFO);
+    die "$msg";
+}
+
+# Info 3: hpesnam.fc.hp.com, nam, [12/May/1998:16:52:47
+
+sub get_stats {
+   my ($dummy, $rest, $system, $user, $accesstime, $index);
+   my $test;
+
+   $serv_up = `ps -ef | grep httpd | egrep -v "grep" | wc -l`;
+   chomp($serv_up);
+   $RunDate = strftime '%Y/%m/%d %H:%M:%S', localtime;
+   $opt_x && print "$serv_up servers are running...\n";
+
+   my $i=0;
+   $header_string[$i++]  = sprintf("Time: %-60s", $RunDate);
+   $header_string[$i++]  = sprintf("Server: %-59s", $localhost);
+   $header_string[$i++]  = sprintf("%-3d Servers are Running%44s", $serv_up, " ");
+   $header_string[$i++]  = sprintf("%-25s %-15s %-25s", "Machine", "User", "Last Access");
+
+   if (defined($opt_d)){
+      $logfile=`ls -rt $opt_d/access_log.* | tail -1`;
+      if (length($logfile) == 0) { 
+	 die "Bad lookup of access filename: $logfile\n";
+      }
+   }
+   undef @info;
+   open(INFO,"tail -$length $logfile|") 
+         || cleanup_and_die "Cannot open pipe to tail\n";
+   $index=0;
+   while(<INFO>){
+      chop;
+      /^\s*$/ && do { undef @info; close(INFO); return; };
+      s/\s+/ /g;
+      ($system, $dummy, $user, $accesstime, $rest)=split(/ /,$_,5);
+      $accesstime=~s/\[//;
+      $accesstime=~s/:/_/g;
+      #$opt_x && print "Info $.: $_\n";
+      if ( $opt_i && $system eq $localhost ){ next; }
+      $opt_x && print "Info $index: $system, $user, $accesstime\n";
+      $info[$index]=$system . ":" . $user . ":" . $accesstime;
+      $index++;
+   }
+   close(INFO);
+}
+
+sub update {
+
+    my($index);
+    my ($system, $user, $accesstime);
+
+    # Update the counter every 30 seconds.
+
+    $opt_x && print "Update...\n";
+    &get_stats;
+    $index=0;
+    if (defined(@info)){
+       $label_string  = "";
+       for ($index=0;$index<=$#info;++$index){
+          @fields=split(/:/,$info[$index]);
+	  $user="";
+          $machine=$fields[0];
+          $accesstime=$fields[2];
+	  if ($fields[1] =~ /-/){
+	      # No user name
+              $opt_x && print "No user for this line\n";
+	      undef($user);
+          }
+          else {
+              $user=$fields[1];
+	  }
+          $opt_x && print "System=$machine\n";
+	  $opt_x && $user && print "  User=$user\n";
+          $opt_x && print "  Access Time=$accesstime\n";
+
+	  if (defined($user)){
+	      $label_string .= sprintf("%-25s %-15s %-25s\n", $machine, $user, $accesstime);
+	  }
+	  else {
+	      $label_string .= sprintf("%-25s %-15s %-25s\n", $machine, " - ", $accesstime);
+	  }
+	  #$opt_x && print "$label_string\n";
+      }
+   }
+    else {
+	if (!defined($opt_i)) {
+	   $label_string = "No Stats from Web server";
+	   }
+	else {
+	   $label_string = "No Accesses from other than $localhost";
+	}
+    }
+    $MW->after($update, \&update);
+} 
+
+MainLoop;

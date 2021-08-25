@@ -1,0 +1,5 @@
+PATH=/softtools/bin700:$PATH
+xv -root -maxpect -rmode 5 -noresetroot -quit /users/red/public_html/images/pcktwtch.gif
+#xv -root -maxpect -rmode 5 -noresetroot -quit /users/red/News/fantasia.gif
+#xv -root -rmode 5 -noresetroot -quit /users/red/.priv/disn01.tif
+#xv -root -rmode 5 -noresetroot -quit /users/red/.priv/rachel.tif

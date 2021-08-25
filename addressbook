@@ -1,0 +1,3451 @@
+#!/usr/local/bin/wish -f
+#  ^^^^^^^^^^^^^^^^^^^^^^^ modify the path to find wish on your computer#
+set configfile "/home/red/addressbook/addressbook.config"
+set myconfigfile "~/.addressbook.config"
+#
+#########################################################################
+#									#
+# This is my adressbuch / addressbook program				#
+# Version 0.7, 02.11.1997						#
+# Copyright (C) 1995, 1996, 1997 Clemens Durka				#
+#									#
+# Clemens Durka (clemens@dagobah.de) 					#
+# http://home.pages.de/~clemens/					#
+#									#
+#########################################################################
+#									#
+# This program is free software; you can redistribute it and/or modify	#
+# it under the terms of the GNU General Public License Version 2 as	#
+# published by the Free Software Foundation.				#
+#									#
+# This program is distributed in the hope that it will be useful,	#
+# but WITHOUT ANY WARRANTY; without even the implied warranty of	#
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the		#
+# GNU General Public License for more details.				#
+#									#
+# You should have received a copy of the GNU General Public License	#
+# along with this program; if not, write to the Free Software		#
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.		#
+#									#
+#########################################################################
+
+#########################################################################
+#########################################################################
+# All configurable parameters are in the configfile			#
+# Don't modify anything below unless you know what you are doing!	#
+#########################################################################
+#########################################################################
+
+set version "Version 0.7, 02.11.1997"
+set possible_languages {english german french spanish dutch swedish italian finnish}
+set realfieldids {mrmrs title name firstname middlename lastname maidenname company institute department addon pobox street country zip city state province county birthday phone phonepriv phonework phonesecretary phonemobile phonepager fax faxpriv faxwork faxsecretary faxmobile email www category remark knowsince lastcontact lastchange alias id nr}
+set allfieldids "$realfieldids other0 other1 other2 other3 other4 other5 other6 other7 other8 other9 other10 other11 other12 other13 other14 other15 other16 other17 other18 other19"
+
+#---------------------------------------------
+# For Backward Compatibility with tcl7.3/tk3.6
+#---------------------------------------------
+
+if {$tk_version == 3.6} {
+    set oldtkversion 1
+} else {
+    set oldtkversion 0
+}
+
+
+#---------------------------------------------
+# Checking for debugflag in commandline
+#---------------------------------------------
+
+if {($argc > 1) && (([lindex $argv 0] == "-db") || ([lindex $argv 0] == "-debug"))} {
+    set debug [lindex $argv 1]
+} else {
+    set debug 0
+}
+
+
+#---------------------------------------------
+# Do Defaultconfiguration
+#---------------------------------------------
+
+proc do_defaultconfigure {} {
+    global options searchtype only_stdout bitmaps adrfile debug
+    global nbfields maxindex tcl_precision lastpressed somethingchanged
+    global lastaction lastadded lastline oldtkversion view writeaccess
+
+    # Here are all the options with their default values.
+    # Instead of changing the defaults here, please change the values
+    # in your global or private config file and not here. 
+    # (normally /usr/local/lib/addressbook/addressbook.config)
+
+    set options(language) german
+    set options(adrfile) {}
+    set options(adrfile1) {}
+    set options(adrfile2) {}
+    set options(adrfile3) {}
+    set options(adrfile1alias) {}
+    set options(adrfile2alias) {}
+    set options(adrfile3alias) {}
+    set options(mycountry) D
+    set options(myareacode) {}
+    set options(dialoutlocal) {}
+    set options(dialoutdistance) {}
+    set options(libdir) /usr/local/lib/addressbook
+    set options(callprog,phone) {echo "Please define programm to call"}
+    set options(callprog,fax) {echo "Please define programm to call"}
+    set options(callprog,email) {echo "Please define programm to call"}
+    set options(callprog,www) {echo "Please define programm to call"}
+    set options(only_stdout) 1
+    set options(texconvert) 0
+    set options(searchtype) match
+    set options(confirm) 0
+    set options(confirmdelete) 1
+    set options(pressdelay) 1
+    set options(select_mask) "*"
+    set options(entrywidth) 35
+    set options(listboxwidth) 27
+    set options(listboxheight) 16
+    set options(printform) address
+    set options(printopt) latex
+    set options(printtype) line
+    set options(printarea) all
+    set options(printfile) "/tmp/addresses_print.ps"
+    set options(exportform) all
+    set options(exportopt) text
+    set options(exportarea) all
+    set options(exportfile) "/tmp/addresses_export"
+    set options(exportseparator) ";"
+    set options(from) {}
+    set options(to) {}
+    set options(makebackup) 1
+    set options(dvips) {dvips}
+    set options(latex) {latex}
+    set options(a2ps) {a2ps}
+    set options(mpage) {mpage}
+    set options(debug) $debug
+    set options(userhead) "\\documentclass{article} \\begin{document} \\begin{tabular}"
+    set options(usertail) "\\end{tabular} \\end{document}"
+    set options(userincludecolumns) 0
+    set options(usercalllatex) 1
+    set options(removetmp) 1
+    set options(lockbydefault) 1
+    set options(nolocking) 0
+
+    set options(color) "old"
+    set options(defaultfont) "-adobe-helvetica-bold-r-normal--*-120-*-*-*-*-iso8859-1"
+    set options(entryfont) "-adobe-helvetica-medium-r-normal--*-120-*-*-*-*-iso8859-1"
+    set options(titlefont) "-adobe-times-medium-r-normal--*-180-*-*-*-*-iso8859-1"
+    set options(fixedfont) "-*-fixed-bold-*-*-*-*-*-*-*-*-*-iso8859-1"
+    set options(showabcbuttons) 1
+    set options(showactionbuttons) 1
+
+    set options(print,name)       {{title firstname lastname}}
+    set options(print,nametel)    {{title firstname lastname} {phone , phonepriv , phonework , fax}}
+    set options(print,address)    {{title firstname lastname} {department} {department2} {institute} {company} {addon street} {pobox} {zipcity} {fullcountry}}
+    set options(print,addresstel) {{title firstname lastname} {department} {department2} {institute} {company} {addon street} {countryzipcity} {phone phonepriv phonework fax}}
+    set options(print,almostever) {{title firstname lastname} {department} {department2} {institute} {company} {addon street} {countryzipcity} {phone phonepriv phonework fax} {birthday} {email} {www}}
+    set options(print,everything) {{title firstname lastname} {department} {department2} {institute} {company} {addon street} {zipcity} {fullcountry} {phone phonepriv phonework fax} {birthday} {email} {www} {category} {remark}}
+    set options(zipformat,eu) "state zip city"
+    set options(zipformat,uk) "city state zip"
+    set options(zipformat,us) ", city state zip"
+    set options(mailbutton_format) {{title firstname lastname} {department} {department2} {institute} {company} {pobox} {addon} {street} {zipcity} {fullcountry}}
+ 
+    # These defaults are for correct initialisation. No never change.
+
+    set options(callprog,phonepriv) $options(callprog,phone)
+    set options(callprog,phonework) $options(callprog,phone)
+    set searchtype $options(searchtype)
+    set only_stdout $options(only_stdout)
+    set bitmaps $options(libdir)/bitmaps
+
+    set nbfields 0
+    set maxindex -1
+    set index 0
+    set tcl_precision 17
+    set lastpressed 0
+    set somethingchanged 0
+    set lastadded {}
+    set lastaction {}
+    set lastline {}
+    set view 1
+    set writeaccess 0
+
+    option add *font "$options(defaultfont)" widgetDefault
+    option add *Entry.font "$options(entryfont)" widgetDefault
+
+    if !$oldtkversion {
+	# Allow umlauts to be entered if configured in xmodmap
+	bind Entry <Alt-Key> "tkEntryInsert %W %A"
+	bind Entry <Control-1> breakpoint
+    }
+}   
+    
+
+#------------------------------------------
+# Get Commandline and Environment
+#------------------------------------------
+
+proc get_cmdline {} {
+    global argv argc env myconfigfile options bitmaps version debug
+    if [info exists env(ADDRBOOK_CONFIG)] {
+	if [file exists $configfile] { 
+	    loadconfigfile $configfile
+	    set myconfigfile $env(ADDRBOOK_CONFIG)
+	}
+    }
+    if [info exists env(ADDRBOOK_LIBDIR)] {
+    	set options(libdir) $env(ADDRBOOK_LIBDIR)
+	set bitmaps $options(libdir)/bitmaps
+    }
+    if [info exists env(ADDRBOOK_ADDRFILE)] {
+    	set options(adrfile) $env(ADDRBOOK_ADDRFILE)
+    }
+
+    while {$argc > 0} {
+    	switch -exact -- [lindex $argv 0] {
+	    -c		-
+	    -configfile	{ 
+		if [file exists [lindex $argv 1]] {
+		    set myconfigfile [lindex $argv 1]
+		    loadconfigfile $myconfigfile 
+		}
+		incr argc -1
+		set argv [lrange $argv 1 end]
+	    }
+	    -ld         -
+	    -libdir	{
+	        set options(libdir) [lindex $argv 1]
+		set bitmaps $options(libdir)/bitmaps
+		incr argc -1
+		set argv [lrange $argv 1 end]
+	    }
+	    -l          -
+	    -lk         -
+	    -lock       {
+		set options(lockbydefault) 1
+	    }
+            -ro         -
+            -readonly   {
+		set options(lockbydefault) 0
+	    }
+	    -lg         -
+	    -lang       -
+	    -language   {
+		set options(language) [lindex $argv 1]
+		incr argc -1
+		set argv [lrange $argv 1 end]
+	    }
+	    -a		-
+	    -addrfile	-
+	    -f		-
+	    -file	{
+	        set options(adrfile) [lindex $argv 1]
+		incr argc -1
+		set argv [lrange $argv 1 end]
+	    }
+	    -iconic     {
+		wm iconify .
+	    }
+	    -db         -
+	    -debug      {
+		set options(debug) [lindex $argv 1]
+		incr argc -1
+		set argv [lrange $argv 1 end]
+	    }
+	    -h          -
+	    -hl         -
+	    -hlp        -
+	    -help      {
+		puts "Addressbook, $version"
+		puts "Normally you can invoke addressbook without commandlineswitches,"
+		puts "if you modify your personal configfile (.addressbook.config)"
+		puts " "
+		puts "Commandline switches"
+		puts " "
+		puts "-a  or -addrfile         path and filename of the addressfile to load"
+		puts "-c  or -configfile       path and filename of the configfile to load"
+		puts "-lg or -language         language (english, german, french, spanish, dutch,"
+		puts "                         italian, swedish, finnish)"
+		puts "-l  or -lock             try to lock the file"
+		puts "-ro or -readonly         open only readonly"
+		puts "-ld or -libdir           path or the library directory"
+		puts "-db or -debug            set debuglevel (0, 1 or 2)"
+		puts "-hlp                     show this help"
+		puts "-iconic                  start as icon"
+		puts " "
+		exit
+	    }
+	    default	{
+		puts [format "Unrecognized Option: %s %s" [lindex $argv 0] [lindex $argv 1]]
+	    }
+	}
+	incr argc -1
+	set argv [lrange $argv 1 end]
+    }
+    # choose highest debug level
+    if {$options(debug) > $debug} {
+	set debug $options(debug)
+    } else {
+	set options(debug) $debug
+    }
+}
+
+
+#------------------------------------------
+# Load Configurationfile
+#------------------------------------------
+
+proc loadconfigfile {configfile} {
+    global options searchtype only_stdout bitmaps debug
+    
+    if {$debug>2} {
+	puts stderr "Loading configfile: $configfile"
+    }
+    set f [open $configfile]
+    while {[gets $f line] >= 0} {
+ 	if {[string length $line] > 0} {
+	    if {[string index $line 0] != "#"} {
+		if {$options(debug)>3} {
+		    puts stderr "Option: [lindex $line 0] = [lindex $line 1]"
+		}
+		if {[lindex $line 1] == "YES"} { 
+		    set options([lindex $line 0]) 1
+		} elseif {[lindex $line 1] == "NO"} {
+                    set options([lindex $line 0]) 0
+		} else {
+		set options([lindex $line 0]) [lindex $line 1]
+		}
+	    }
+	}
+    }
+    close $f
+    set options(callprog,phonepriv) $options(callprog,phone)
+    set options(callprog,phonework) $options(callprog,phone)
+    set searchtype $options(searchtype)
+    set only_stdout $options(only_stdout)
+    set bitmaps $options(libdir)/bitmaps
+    # choose highest debug level
+    if {$options(debug) > $debug} {
+	set debug $options(debug)
+    } else {
+	set options(debug) $debug
+    }
+}
+
+#------------------------------------------
+# Save Configurationfile
+#------------------------------------------
+
+proc saveconfigfile {} {
+    global options myconfigfile
+
+    if {$options(debug)>2} {
+	puts stderr "Saving configfile: $myconfigfile"
+    }
+    if {$options(makebackup)} {
+	if [file exists $myconfigfile] {
+	    exec cp -p [glob $myconfigfile] [glob $myconfigfile].bak
+	}
+    }
+    set f [open $myconfigfile w]
+    foreach i {language mycountry myareacode dialoutlocal dialoutdistance\
+	    libdir searchtype texconvert confirm confirmdelete\
+	    adrfile1 adrfile2 adrfile3} {
+	puts $f "$i $options($i)"
+    }
+    foreach i {adrfile1alias adrfile2alias adrfile3alias\
+	    callprog,phone callprog,fax callprog,email\
+	    callprog,www only_stdout searchtype texconvert confirm\
+	    confirmdelete userhead usertail} {
+	puts $f "$i {$options($i)}"
+    }
+    close $f
+}
+
+#------------------------------------------
+# Load languagespecific things
+#------------------------------------------
+
+proc loadlanguage {lang} {
+    global mes realfieldids debug
+    
+    if {$debug>2} {
+	puts stderr "Loading languagefile: $lang"
+    }
+    set f [open $lang]
+    while {[gets $f line] >= 0} {
+ 	if {[string length $line] > 0} {
+	    if {[string index $line 0] != "#"} {
+		set mes([lindex $line 0]) [lindex $line 1]
+	    }
+	}
+    }
+    close $f
+    # second fields
+    foreach i $realfieldids {
+	set mes($i[]2) "$mes($i) 2"
+    }
+}
+
+
+#------------------------------------------
+# Load country informations
+#------------------------------------------
+
+proc loadcountries {} {
+    global options countries possible_languages allcodes isocode
+
+    if {$options(debug)>2} {
+	puts stderr "Loading countryfile: $options(libdir)/countries"
+    }
+    set cindex [expr [lsearch $possible_languages $options(language)] + 7]
+
+    set f [open $options(libdir)/countries]
+    while {[gets $f line] >= 0} {
+ 	if {[string length $line] > 0} {
+	    if {[string index $line 0] != "#"} {
+		set l [split $line ";"]
+		set code [lindex $l 0]
+		set countries($code,iso)           [lindex $l 1]
+		set countries($code,intl_prefix)   [lindex $l 2]
+		set countries($code,intl_dialout)  [lindex $l 3]
+		set countries($code,intl_leaveout) [lindex $l 4]
+		set countries($code,zipformat)     [lindex $l 5]
+		set countries($code,fullname)      [lindex $l $cindex]
+		set isocode(countries($code,iso)) $code
+		lappend allcodes $code
+	    }
+	}
+    }
+    close $f
+}
+
+#------------------------------------------
+# Initialisation: This code is called first
+#------------------------------------------
+
+do_defaultconfigure
+if [file exists $configfile] {
+    loadconfigfile $configfile
+}
+
+set nolocking $options(nolocking)
+
+if [file exists $myconfigfile] {
+    loadconfigfile $myconfigfile
+}
+get_cmdline
+
+# prevent nolocking to be overwritten by user :-)
+set options(nolocking) $nolocking
+
+loadlanguage $options(libdir)/$options(language).translation
+
+source "$options(libdir)/$options(language).helptext"
+
+loadcountries
+
+foreach i [winfo child .] {
+    catch {destroy $i}
+}
+
+
+#------------------------------------------
+# Load Database
+#------------------------------------------
+
+proc loaddatabase {filename} {
+    global adrbook maxindex fields somethingchanged selected writeaccess
+    global options mes
+
+    if {$options(debug)>2} {
+	puts stderr "Loading database: $filename"
+    }
+    set index 0
+    set f [open $filename]
+    
+    while {[gets $f line] >= 0} {
+	set adrbook($index) [split $line $fields(separatorchar)]
+	set selected($index) 0
+	incr index
+    }
+    close $f
+    set maxindex [expr $index - 1]
+    set somethingchanged 0
+    set writable [file writable $filename]
+    # test for lockfile
+    if $options(nolocking) {
+	set writeaccess 1
+    } else {
+	set lockactive [file exists $filename.lock]
+	if {$writable && !$lockactive && $options(lockbydefault)} {
+	    # do locking
+	    if {$options(debug) > 1} {
+		puts stderr "Locking: $filename"
+	    }
+	    set lf [open $filename.lock w]
+	    set hostname ""
+	    set user ""
+	    catch {set hostname [exec hostname]}
+	    catch {set user [exec whoami]}
+	    puts $lf "user: $user"
+	    puts $lf "host: $hostname"
+	    puts $lf "process: [pid]"
+	    close $lf
+	    set writeaccess 1
+	} else {
+	    set writeaccess 0
+	    if {$options(debug)>1} {
+		puts stderr "open readonly: $filename! writable: $writable, lockactive: $lockactive, lockbydef: $options(lockbydefault)"
+	    }
+	    if $options(lockbydefault) {
+		if $lockactive {
+		    set lockfile [open $filename.lock]
+		    set user [gets $lockfile]
+		    set host [gets $lockfile]
+		    set pid  [gets $lockfile]
+		    close $lockfile
+		    tk_dialog .lock_warning "Locking" "$mes(islocked) $user; $host; $pid. $mes(openro) $mes(nottrue) $filename.lock" {} 0 OK
+		} else {
+		    tk_dialog .lock_warning "Locking" "$filename: $mes(notwritable) $mes(openro) $mes(usesaveas)" {} 0 OK
+		}
+	    }    
+	}
+    }
+}
+
+#------------------------------------------
+# Save Database
+#------------------------------------------
+
+proc savedatabase {filename} {
+    global mes nbfields names adrbook maxindex somethingchanged fields options
+
+    if {$options(debug)>2} {
+	puts stderr "Saving database: $filename"
+    }
+    if {$options(makebackup)} {
+	if [file exists $filename] {
+	    exec cp -p [glob $filename] [glob $filename].bak
+	}
+    }
+    set f [open $filename w]
+
+    for {set i 0} {$i <= $maxindex} {incr i} {
+	puts $f [join $adrbook($i) $fields(separatorchar)]
+    }
+    close $f
+    .f.main.list.status.2 configure -text $mes(saved)
+    set somethingchanged 0
+}
+
+
+#------------------------------------------
+# Load Dataformatfile
+#------------------------------------------
+
+proc loaddataformatfile {file} {
+    global options searchtype only_stdout exportfields
+    global fields allfieldids realfieldids names nbfields mes maxlength
+
+    if {$options(debug)>2} {
+	puts stderr "Loading dataformatfile: $file"
+    }
+    
+    foreach i $allfieldids {
+	set fields($i) -1
+    }
+    foreach i $realfieldids {
+	set fields($i[]2) -1
+    }
+    # delete old entries from previous database
+    if [info exists fields(sort1)] { unset fields(sort1) }
+    if [info exists fields(sort2)] { unset fields(sort2) }
+    set i 0
+    while {[info exists fields($i)]} {
+	unset fields($i)
+	incr i
+    }
+
+    set f [open $file]
+    while {[gets $f line] >= 0} {
+ 	if {[string length $line] > 0} {
+	    if {[string index $line 0] != "#"} {
+		set fields([lindex $line 0]) [lindex $line 1]
+		if [regexp \[0-9\] [string index $line 0]] { 
+		    set fields([lindex $line 1]) [lindex $line 0]
+		}
+	    }
+	}
+    }
+    foreach i {0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19} {
+	if [info exists fields(label$i)] {
+	    set mes(other$i) $fields(label$i)
+	} else {
+	    set fields(label$i) {}
+	}
+    }
+    
+    set i 0
+    set names {}
+    while {[info exists fields($i)]} {
+	lappend names $mes($fields($i))
+	set exportfields($i) 1
+	incr i
+    }
+    set nbfields [llength $names]
+    for {set i -1} {$i < $nbfields} {incr i} {
+	set maxlength($i) 0
+    }
+    if {![info exists fields(sort1)]} {set fields(sort1) $fields(listboxentry1)}
+    if {![info exists fields(sort2)]} {set fields(sort2) $fields(listboxentry2)}
+}
+
+
+#------------------------------------------
+# Some debugging routines
+#------------------------------------------
+
+proc dputs {args} {
+    global debug
+    if $debug {
+	set current [expr [info level] - 1]
+	set caller toplevel
+	catch {
+	    set caller [lindex [info level $current] 0]
+	}
+	puts stderr "$caller: $args"
+    }
+}
+
+proc dputs2 {args} {
+    global debug
+    if {$debug > 1} {
+	set current [expr [info level] - 1]
+	set caller toplevel
+	catch {
+	    set caller [lindex [info level $current] 0]
+	}
+	puts stderr "$caller: $args"
+    }
+}
+
+proc show {current} {
+    if {$current > 0} {
+	set info [info level $current]
+	set proc [lindex $info 0]
+	puts stderr "$current: Procedure $proc \
+		{[info args $proc ]}"
+	set index 0
+	foreach arg [info args $proc] {
+	    puts stderr "\t$arg = [lindex $info [incr index]]"
+	}
+    } else {
+	puts stderr "Top level"
+    }
+}
+
+proc breakpoint {} {
+    set max [expr [info level] - 1]
+    set current $max
+    show $current
+    while (1) {
+	puts -nonewline stderr "#$current: "
+	gets stdin line
+	while {![info complete $line]} {
+	    puts -nonewline stderr "? "
+	    append line \n[gets stdin]
+	}
+	switch -- $line {
+	    + {
+		if {$current < $max} {
+		    show [incr current]
+		}
+	    } 
+	    - {
+		if {$current > 0} {
+		    show [incr current -1]
+		}
+	    }
+	    C {
+		puts stderr "Resuming execution";return
+	    }
+	    ? {
+		show $current
+	    }
+	    default {
+		catch { uplevel #$current $line } result
+		puts stderr $result
+	    }
+	}
+    }
+}
+
+#------------------------------------------
+# Edit global Preferences
+#------------------------------------------
+
+proc prefeditglob {} {
+    global somethingchanged mes possible_languages options
+
+    if [catch {toplevel .pref}] {
+	raise .pref
+    } else {
+	wm title .pref $mes(globpref)
+	set buttons [frame .pref.but]
+	pack .pref.but -side top -fill x
+	button $buttons.quit -text $mes(cancel) -command { destroy .pref }
+	button $buttons.save -text $mes(save) -command {
+	    foreach i {mycountry myareacode dialoutlocal dialoutdistance\
+	        libdir adrfile1 adrfile1alias adrfile2 adrfile2alias adrfile3\
+		adrfile3alias callprog,phone callprog,fax callprog,email\
+                callprog,www} {\
+		    set options($i) [.pref.b.b.$i.e get]\
+		};\
+	    destroy .pref;\
+	    saveconfigfile\
+	}
+	label $buttons.label -text $mes(globpref)
+	pack $buttons.label -side left -fill x
+	pack $buttons.quit $buttons.save -side right
+
+	frame .pref.b -borderwidth 2 -relief raised
+	pack .pref.b -fill both
+	set body [frame .pref.b.b -bd 2]
+	pack .pref.b.b -fill both
+
+	set maxwidth 50
+	
+	set f [frame $body.1 -borderwidth 0]
+	pack $f -fill both
+	label $f.l -text "$mes(language):  "
+	# label $f.l -text $mes(language) -width $maxwidth
+	pack $f.l -side left
+	foreach c $possible_languages {
+	    radiobutton $f.$c -text $c -variable options(language) -value $c	
+	    pack $f.$c -side left
+	}
+
+	foreach i {mycountry myareacode dialoutlocal dialoutdistance \
+	        libdir adrfile1 adrfile1alias adrfile2 adrfile2alias \
+	        adrfile3 adrfile3alias callprog,phone callprog,fax \
+		callprog,email callprog,www} {
+	    set f [frame $body.$i -borderwidth 0]
+	    pack $f -fill both
+	    label $f.l -text $mes($i) -width $maxwidth
+	    pack $f.l -side left
+	    entry $f.e -width 40 -relief sunken
+	    pack $f.e -side left -fill x -expand true
+	    $f.e insert 0 $options($i)
+	}
+
+	set f [frame $body.8 -borderwidth 0]
+	pack $f -fill both
+	label $f.l -text $mes(searchtype) -width $maxwidth
+	radiobutton $f.1 -text "exact" -variable options(searchtype) -value exact
+	radiobutton $f.2 -text "match" -variable options(searchtype) -value match
+	radiobutton $f.3 -text "regexp" -variable options(searchtype) -value regexp
+	radiobutton $f.4 -text "regexp (nocase)" -variable options(searchtype) -value regexpnocase
+	pack $f.l $f.1 $f.2 $f.3 $f.4 -side left
+
+	set f [frame $body.19 -borderwidth 0]
+	pack $f -fill both
+	label $f.l -text $mes(only_stdout) -width $maxwidth
+	checkbutton $f.c -text "On" -variable options(only_stdout)
+	pack $f.l $f.c -side left
+
+	set f [frame $body.20 -borderwidth 0]
+	pack $f -fill both
+	label $f.l -text $mes(texconvert) -width $maxwidth
+	checkbutton $f.c -text "On" -variable options(texconvert)
+	pack $f.l $f.c -side left
+
+	set f [frame $body.21 -borderwidth 0]
+	pack $f -fill both
+	label $f.l -text $mes(confirm) -width $maxwidth
+	checkbutton $f.c -text "On" -variable options(confirm)
+	pack $f.l $f.c -side left
+
+	set f [frame $body.22 -borderwidth 0]
+	pack $f -fill both
+	label $f.l -text $mes(confirmdelete) -width $maxwidth
+	checkbutton $f.c -text "On" -variable options(confirmdelete)
+	pack $f.l $f.c -side left
+    }
+}
+
+
+#------------------------------------------
+# Edit dataspecific Preferences
+#------------------------------------------
+
+proc prefeditfile {} {
+    global somethingchanged options mes fields allfieldids nbfields
+
+    if [catch {toplevel .pref}] {
+	raise .pref
+    } else {
+	wm title .pref $mes(filepref)
+	set buttons [frame .pref.but]
+	pack .pref.but -side top -fill x
+	button $buttons.quit -text $mes(cancel) -command { destroy .pref }
+	button $buttons.save -text $mes(save) -command {\
+	    foreach i {separatorchar listboxformat listboxentry1 listboxentry2\
+		sort1 sort2 label0 label1 label2 label3 label4 label5 \
+		label6 label7 label8 label9} {\
+		    set fields($i) [.pref.b.b.$i.e get]\
+		};\
+	    for {set i 0} {$i < $nbfields} {incr i} {\
+		set fields($i) [.pref.b.c.$i.e get]\
+	    };\
+	    destroy .pref\
+        }
+	label $buttons.label -text "You cannot save yet, you have to modify the formatfile"
+	pack $buttons.label -side left -fill x
+	pack $buttons.quit $buttons.save -side right
+	frame .pref.b -borderwidth 2 -relief raised
+	pack .pref.b -fill both
+	set body [frame .pref.b.b -bd 10]
+	pack .pref.b.b -fill both -side left -expand true
+
+	set maxwidth 16
+
+	foreach i {separatorchar listboxformat listboxentry1 listboxentry2 \
+	         sort1 sort2} {
+	    set f [frame $body.$i -borderwidth 0]
+	    pack $f -fill both
+	    label $f.l -text $mes($i) -width $maxwidth
+	    pack $f.l -side left
+	    entry $f.e -width 10 -relief sunken
+	    pack $f.e -side left -fill x -expand true
+	    $f.e insert 0 $fields($i)
+	}
+
+	foreach i {0 1 2 3 4 5 6 7 8 9} {
+	    set f [frame $body.label$i -borderwidth 0]
+	    pack $f -fill both
+	    label $f.l -text "$mes(labelfor) other$i" -width $maxwidth
+	    pack $f.l -side left
+	    entry $f.e -width 15 -relief sunken
+	    pack $f.e -side left -fill x -expand true
+	    $f.e insert 0 $fields(label$i)
+	}	    
+
+	set body [frame .pref.b.c -bd 10]
+	pack .pref.b.c -fill both -side left -expand true
+
+	for {set i 0} {$i < $nbfields} {incr i} {
+	    set f [frame $body.$i -borderwidth 0]
+	    pack $f -fill both
+	    label $f.l -text "$mes(field) $i" -width 8
+	    pack $f.l -side left
+	    entry $f.e -width 15 -relief sunken
+	    pack $f.e -side left -fill x -expand true
+	    $f.e insert 0 $fields($i)
+	    label $f.c -text "$mes($fields($i))" -width $maxwidth
+	    pack $f.c -side left -fill x -expand true	    
+	}
+    }
+}
+
+
+#------------------------------------------
+# Put the country code in the correct field
+#------------------------------------------
+
+proc putcountrycode ind {
+    global allcodes fields
+
+    .f.main.entry.$fields(country).entry delete 0 end
+    .f.main.entry.$fields(country).entry insert 0 [lindex $allcodes $ind]
+}
+
+
+#------------------------------------------
+# Show all countries
+#------------------------------------------
+
+proc countrycodes {} {
+    global mes allcodes countries oldtkversion options
+
+    if [catch {toplevel .countries}] {
+	raise .countries
+    } else {
+	wm title .countries $mes(countries)
+	set buttons [frame .countries.but]
+	pack .countries.but -side top -fill x
+	button $buttons.quit -text $mes(close) -command {destroy .countries}
+	pack $buttons.quit -side right -expand yes -fill x
+        
+	set cb [frame .countries.b -borderwidth 2]
+	pack $cb -fill both
+	
+	if $oldtkversion {
+	    listbox $cb.list -relief sunken -geometry 40x15 -yscrollcommand "$cb.scroll set" -font "$options(fixedfont)"
+	    tk_listboxSingleSelect $cb.list 
+	    bind $cb.list <1> {%W select from [%W nearest %y]; putcountrycode [.countries.b.list curselection]}
+	} else {
+	    listbox $cb.list -relief sunken -width 40 -height 15 -yscrollcommand "$cb.scroll set" -font "$options(fixedfont)"
+	    bind $cb.list <1> {tkListboxBeginSelect %W [%W index @%x,%y]; putcountrycode [.countries.b.list curselection]}
+	}
+	scrollbar $cb.scroll -orient vertical -command "$cb.list yview" -relief sunken
+	pack $cb.list -side left -padx 2
+	pack $cb.scroll -side right -fill y -padx 2
+
+	foreach code $allcodes {
+	    $cb.list insert end [format "%3s %s %s" $code $countries($code,iso) $countries($code,fullname)]
+	} 
+    }
+}
+
+
+
+#------------------------------------------
+# Create the basic front end.
+#------------------------------------------
+
+proc createbasicfrontend {} {
+    global mes oldtkversion options bitmaps
+
+    #------------------------------------------
+    # Add menus, dialog boxes
+    #------------------------------------------
+
+    if {$options(debug)>2} {
+	puts stderr "Creating basic frontend."
+    }
+
+    if !$oldtkversion {
+	# Use old colours in new tk because the new gray is ugly.
+	if {$options(color) == "old"} {
+	    tk_bisque
+	} elseif {$options(color) != "new"} {
+	    tk_setPalette $options(color)
+	}
+    }
+
+    wm title . $mes(adressbook)
+    wm iconname . $mes(adressbook)
+    wm iconbitmap . @$bitmaps/addressbook.xbm
+
+    frame .f
+    pack .f -fill y -fill x -expand yes
+    frame .f.menu -relief raised -borderwidth 1
+    pack .f.menu -side top -fill x -expand yes
+
+    menubutton .f.menu.file -text $mes(file) -menu .f.menu.file.m
+    menu .f.menu.file.m
+    .f.menu.file.m add command -label $mes(load) -command {loadAction ""}
+    .f.menu.file.m add command -label $mes(save) -command saveAction
+    .f.menu.file.m add command -label $mes(saveas) -command saveasAction
+    .f.menu.file.m add command -label $mes(print) -command printAction
+    .f.menu.file.m add command -label $mes(import) -command importAction
+    .f.menu.file.m add command -label $mes(export) -command exportAction
+    .f.menu.file.m add command -label $mes(close) -command closeAction
+    .f.menu.file.m add command -label $mes(exit) -command quitAction
+
+    # Menuentry for selection of 3 fast datafiles
+    if {$options(adrfile1) != ""} {
+	if {$options(adrfile1alias) == ""} {
+	    set options(adrfile1alias) [file tail $options(adrfile1)]
+	}
+	.f.menu.file.m add separator
+	.f.menu.file.m add command -label $options(adrfile1alias) -command {loadAction $options(adrfile1)}
+	if {$options(adrfile2) != ""} {
+	    if {$options(adrfile2alias) == ""} {
+		set options(adrfile2alias) [file tail $options(adrfile2)]
+	    }
+	    .f.menu.file.m add command -label $options(adrfile2alias) -command {loadAction $options(adrfile2)}
+	    if {$options(adrfile3) != ""} {
+		if {$options(adrfile3alias) == ""} {
+		    set options(adrfile3alias) [file tail $options(adrfile3)]
+		}
+		.f.menu.file.m add command -label $options(adrfile3alias) -command {loadAction $options(adrfile3)}
+	    }
+	}
+    }
+
+    pack .f.menu.file -side left -padx 10
+    
+    if $oldtkversion {
+	.f.menu.file.m entryconfig 0 -accel Ctrl+L
+	.f.menu.file.m entryconfig 1 -accel Ctrl+V
+	.f.menu.file.m entryconfig 2 -accel Ctrl+W
+	.f.menu.file.m entryconfig 3 -accel Ctrl+P
+	.f.menu.file.m entryconfig 4 -accel Ctrl+I
+	.f.menu.file.m entryconfig 5 -accel Ctrl+E
+	.f.menu.file.m entryconfig 6 -accel Ctrl+O
+	.f.menu.file.m entryconfig 7 -accel Ctrl+X
+    } else {
+	.f.menu.file.m entryconfig 1 -accel Ctrl+L
+	.f.menu.file.m entryconfig 2 -accel Ctrl+V
+	.f.menu.file.m entryconfig 3 -accel Ctrl+W
+	.f.menu.file.m entryconfig 4 -accel Ctrl+P
+	.f.menu.file.m entryconfig 5 -accel Ctrl+I
+	.f.menu.file.m entryconfig 6 -accel Ctrl+E
+	.f.menu.file.m entryconfig 7 -accel Ctrl+O
+	.f.menu.file.m entryconfig 8 -accel Ctrl+X
+    }
+    bind Entry <Control-f> loadAction
+    bind Entry <Control-v> saveAction
+    bind Entry <Control-w> saveasAction
+    bind Entry <Control-p> printAction
+    bind Entry <Control-i> importAction
+    bind Entry <Control-e> exportAction
+    bind Entry <Control-o> closeAction
+    bind Entry <Control-q> quitAction
+    bind Entry <Control-x> quitAction
+
+    # bind german umlauts to different function keys
+    if !$oldtkversion {
+	bind Entry <Control-Key-F1> "tkEntryInsert %W ä"
+	bind Entry <Control-Key-F2> "tkEntryInsert %W Ä"
+	bind Entry <Control-Key-F3> "tkEntryInsert %W ö"
+	bind Entry <Control-Key-F4> "tkEntryInsert %W Ö"
+	bind Entry <Control-Key-F5> "tkEntryInsert %W ü"
+	bind Entry <Control-Key-F6> "tkEntryInsert %W Ü"
+	bind Entry <Control-Key-F7> "tkEntryInsert %W á"
+	bind Entry <Control-Key-F8> "tkEntryInsert %W é"
+	bind Entry <Control-Key-F9> "tkEntryInsert %W ó"
+	bind Entry <Control-Key-F10> "tkEntryInsert %W ß"
+	bind Entry <Control-Key-F11> "tkEntryInsert %W ó"
+	bind Entry <Control-Key-F12> "tkEntryInsert %W è"
+	bind Entry <Alt-Key-F1> "tkEntryInsert %W ä"
+	bind Entry <Alt-Key-F2> "tkEntryInsert %W Ä"
+	bind Entry <Alt-Key-F3> "tkEntryInsert %W ö"
+	bind Entry <Alt-Key-F4> "tkEntryInsert %W Ö"
+	bind Entry <Alt-Key-F5> "tkEntryInsert %W ü"
+	bind Entry <Alt-Key-F6> "tkEntryInsert %W Ü"
+	bind Entry <Alt-Key-F7> "tkEntryInsert %W á"
+	bind Entry <Alt-Key-F8> "tkEntryInsert %W é"
+	bind Entry <Alt-Key-F9> "tkEntryInsert %W ó"
+	bind Entry <Alt-Key-F10> "tkEntryInsert %W ß"
+	bind Entry <Alt-Key-F11> "tkEntryInsert %W ó"
+	bind Entry <Alt-Key-F12> "tkEntryInsert %W è"
+    }
+
+    menubutton .f.menu.edit -text $mes(edit) -menu .f.menu.edit.m
+    menu .f.menu.edit.m
+
+    .f.menu.edit.m add command -label $mes(undo)  -command undoAction
+    .f.menu.edit.m add command -label $mes(clear) -command {\
+	clearAction;\
+	.f.main.list.status.4.e delete 0 end; \
+	focus .f.main.entry.0.entry
+    }
+    .f.menu.edit.m add command -label $mes(delete) -command deleteAction
+    .f.menu.edit.m add command -label $mes(add) -command addAction
+    .f.menu.edit.m add command -label $mes(update) -command updateAction
+    .f.menu.edit.m add command -label $mes(search) -command searchAdr
+    .f.menu.edit.m add command -label $mes(view) -command toggleview
+    .f.menu.edit.m add command -label $mes(mark) -command toggleselect
+    # .f.menu.edit.m add command -label $mes(unmark) -command toggleselect
+    pack .f.menu.edit -side left -padx 10
+  
+    if $oldtkversion {
+	.f.menu.edit.m entryconfig 0 -accel Ctrl+N
+	.f.menu.edit.m entryconfig 1 -accel Ctrl+C
+	.f.menu.edit.m entryconfig 2 -accel Ctrl+D
+	.f.menu.edit.m entryconfig 3 -accel Ctrl+A
+	.f.menu.edit.m entryconfig 4 -accel Ctrl+U
+	.f.menu.edit.m entryconfig 5 -accel Ctrl+S
+	.f.menu.edit.m entryconfig 6 -accel Ctrl+G
+	.f.menu.edit.m entryconfig 7 -accel Ctrl+M
+    } else {
+	.f.menu.edit.m entryconfig 1 -accel Ctrl+N
+	.f.menu.edit.m entryconfig 2 -accel Ctrl+C
+	.f.menu.edit.m entryconfig 3 -accel Ctrl+D
+	.f.menu.edit.m entryconfig 4 -accel Ctrl+A
+	.f.menu.edit.m entryconfig 5 -accel Ctrl+U
+	.f.menu.edit.m entryconfig 6 -accel Ctrl+S
+	.f.menu.edit.m entryconfig 7 -accel Ctrl+G
+	.f.menu.edit.m entryconfig 8 -accel Ctrl+M
+    }
+    
+    bind Entry <Control-n> undoAction
+    bind Entry <Control-c> {\
+	clearAction;\
+        .f.main.list.status.4.e delete 0 end; \
+	focus .f.main.entry.0.entry\
+    }
+    bind Entry <Control-d> deleteAction
+    bind Entry <Control-a> addAction
+    bind Entry <Control-u> updateAction
+    bind Entry <Control-s> searchAdr
+    bind Entry <Control-g> toggleview
+    bind Entry <Control-m> toggleselect
+
+    menubutton .f.menu.goto -text $mes(goto) -menu .f.menu.goto.m
+    menu .f.menu.goto.m
+    
+    .f.menu.goto.m add command -label $mes(first)  -command {moveabsAdr 0}
+    .f.menu.goto.m add command -label $mes(back10) -command {moverelAdr -10}
+    .f.menu.goto.m add command -label $mes(back)   -command {moverelAdr -1}
+    .f.menu.goto.m add command -label $mes(for)    -command {moverelAdr 1}
+    .f.menu.goto.m add command -label $mes(for10)  -command {moverelAdr 10}
+    .f.menu.goto.m add command -label $mes(last)   -command {moveabsAdr -1}
+    pack .f.menu.goto -side left -padx 10
+  
+    if $oldtkversion {
+	.f.menu.goto.m entryconfig 0 -accel Home
+	.f.menu.goto.m entryconfig 1 -accel " "
+	.f.menu.goto.m entryconfig 2 -accel "Page Up"
+	.f.menu.goto.m entryconfig 3 -accel "Page Down"
+	.f.menu.goto.m entryconfig 4 -accel " "
+	.f.menu.goto.m entryconfig 5 -accel End
+    } else {
+	.f.menu.goto.m entryconfig 1 -accel Home
+	.f.menu.goto.m entryconfig 2 -accel " "
+	.f.menu.goto.m entryconfig 3 -accel "Page Up"
+	.f.menu.goto.m entryconfig 4 -accel "Page Down"
+	.f.menu.goto.m entryconfig 5 -accel " "
+	.f.menu.goto.m entryconfig 6 -accel End
+    }
+
+    bind Entry <Home>  "moveabsAdr  0"
+    bind Entry <Prior> "moverelAdr -1"
+    bind Entry <Next>  "moverelAdr  1"
+    bind Entry <End>   "moveabsAdr -1"
+    
+    menubutton .f.menu.options -text $mes(options) -menu .f.menu.options.m
+    menu .f.menu.options.m
+    .f.menu.options.m add cascade -label $mes(searchopt) -menu .f.menu.options.m.search
+    .f.menu.options.m add cascade -label $mes(onlystdout) -menu .f.menu.options.m.out
+    .f.menu.options.m add cascade -label $mes(texconv) -menu .f.menu.options.m.tex
+    .f.menu.options.m add command -label $mes(globpref) -command prefeditglob 
+    .f.menu.options.m add command -label $mes(filepref) -command prefeditfile
+    pack .f.menu.options -side left -padx 10
+
+    menu .f.menu.options.m.search
+    .f.menu.options.m.search add radiobutton -label $mes(exactsearch) -variable searchtype -value exact
+    .f.menu.options.m.search add radiobutton -label $mes(wildsearch) -variable searchtype -value match
+    .f.menu.options.m.search add radiobutton -label $mes(regexpsearch) -variable searchtype -value regexp
+    .f.menu.options.m.search add radiobutton -label $mes(regexpnocasesearch) -variable searchtype -value regexpnocase
+
+    menu .f.menu.options.m.out
+    .f.menu.options.m.out add checkbutton -label $mes(on) -variable only_stdout
+
+    menu .f.menu.options.m.tex
+    .f.menu.options.m.tex add radiobutton -label $mes(iso) -variable options(texconvert) -value 0
+    .f.menu.options.m.tex add radiobutton -label $mes(tex) -variable options(texconvert) -value 1
+
+    menubutton .f.menu.countries -text $mes(countries) -menu .f.menu.countries.m
+    menu .f.menu.countries.m
+    .f.menu.countries.m add command -label $mes(countrycodes) -command countrycodes 
+    pack .f.menu.countries -side left -padx 10
+
+    label .f.menu.space -text " "  -width 25
+    pack .f.menu.space -side left
+
+    menubutton .f.menu.help -text $mes(help) -menu .f.menu.help.m
+    menu .f.menu.help.m
+    pack .f.menu.help -side right -padx 10
+    .f.menu.help.m add command -label $mes(manual) -command {showtext MANUAL}
+    .f.menu.help.m add command -label $mes(registration) -command {showtext REGISTRATION}
+    .f.menu.help.m add command -label $mes(oncontext) -command {Help context}
+    .f.menu.help.m add command -label $mes(onhelp) -command {Help help}
+    .f.menu.help.m add command -label $mes(onentry) -command {Help .f.main.entry.0.entry}
+    .f.menu.help.m add command -label $mes(onkeys) -command {Help keys}
+    .f.menu.help.m add command -label $mes(onversion) -command {showversion}
+
+    if $oldtkversion {
+	tk_menuBar .f.menu .f.menu.file .f.menu.edit .f.menu.goto .f.menu.options .f.menu.countries .f.menu.help
+	tk_bindForTraversal .
+    }
+}
+
+
+#------------------------------------------
+# Create the front end with a database
+#------------------------------------------
+
+proc createfrontend {} {
+    global nbfields names adrbook fields helpCmds helpTopics
+    global maxindex nbfound bitmaps options writeaccess
+    global searchtype only_stdout mes found phones oldtkversion view
+
+    if {$options(debug)>2} {
+	puts stderr "Creating databasespecific frontend."
+    }
+
+    frame .f.main
+    pack .f.main -side top -fill x -fill y -expand yes -padx 1 -pady 1
+    set f [frame .f.main.entry]
+    pack $f -side left -fill x -fill y -expand yes -anchor center
+
+    for {set i 0} {$i < $nbfields} {incr i} {
+	frame $f.$i
+	pack $f.$i -side top -pady 1 -anchor e -fill y -expand true
+
+	label $f.$i.label -text [format "%s:" [lindex $names $i]] -anchor e
+	entry $f.$i.entry -width $options(entrywidth) -relief sunken
+	pack $f.$i.entry .f.main.entry.$i.label -side right -fill x -expand true
+	bind $f.$i.entry <Return> "focus $f.[expr $i + 1].entry"
+	bind $f.$i.entry <Down> "focus $f.[expr $i + 1].entry"
+	bind $f.$i.entry <Up> "focus $f.[expr $i - 1].entry"
+	if $oldtkversion {
+	    bind $f.$i.entry <Tab> "focus $f.[expr $i + 1].entry"
+	    bind $f.$i.entry <Shift-Tab> "focus $f.[expr $i - 1].entry"
+	} else {
+	    bindtags $f.$i.entry "$f.$i.entry Entry ."
+	    bind $f.$i.entry <Tab> "focus $f.[expr $i + 1].entry"
+	    bind $f.$i.entry <Shift-Tab> "focus $f.[expr $i - 1].entry"
+	}
+    }
+    bind $f.[expr $nbfields - 1].entry <Return> "focus .f.main.list.status.4.e"
+    bind $f.[expr $nbfields - 1].entry <Down> "focus .f.main.list.status.4.e"
+    bind $f.0.entry <Up> "focus .f.main.list.status.4.e"
+    if $oldtkversion {
+	bind Entry <Left> {%W icursor [expr [%W index insert] - 1]}
+	bind Entry <Right> {%W icursor [expr [%W index insert] + 1]}
+	bind Entry <Shift-Left> {%W icursor 0}
+	bind Entry <Home> {%W icursor 0}
+	bind Entry <Shift-Right> {%W icursor end}
+	bind Entry <End> {%W icursor end}
+	bind $f.[expr $nbfields - 1].entry <Tab> "focus .f.main.list.status.4.e"
+	bind $f.0.entry <Shift-Tab> "focus .f.main.list.status.4.e"
+	# support cut and paste for tk3.6
+	bind Entry <ButtonPress-2> "catch {%W insert insert \[selection get\]}"
+    } else {
+	bind $f.[expr $nbfields - 1].entry <Tab> "focus .f.main.list.status.4.e"
+	bind $f.0.entry <Shift-Tab> "focus .f.main.list.status.4.e"
+    }
+    bind Entry <Any-F1> {Help [winfo containing %X %Y] %X %Y}
+    bind Entry <Any-Help> {Help [winfo containing %X %Y] %X %Y}
+
+    frame .f.buttons
+    pack .f.buttons -side bottom -pady 1 -padx 1 -expand yes -fill x -anchor center
+    button .f.buttons.undo -text $mes(undo)
+    button .f.buttons.clear -text $mes(clear)
+    button .f.buttons.delete -text $mes(delete)
+    button .f.buttons.add -text $mes(add)
+    button .f.buttons.change -text $mes(update)
+    button .f.buttons.search -text $mes(search)
+    button .f.buttons.auswahl -text $mes(view)
+
+    if {!$writeaccess} {
+	.f.buttons.undo config -state disabled
+	.f.buttons.delete config -state disabled
+	.f.buttons.add config -state disabled
+	.f.buttons.change config -state disabled
+	if $oldtkversion {
+	    .f.menu.edit.m entryconfigure 0 -state disabled
+	    .f.menu.edit.m entryconfigure 2 -state disabled
+	    .f.menu.edit.m entryconfigure 3 -state disabled
+	    .f.menu.edit.m entryconfigure 4 -state disabled
+	    .f.menu.file.m entryconfigure 1 -state disabled
+	} else {
+	    .f.menu.edit.m entryconfigure 1 -state disabled
+	    .f.menu.edit.m entryconfigure 3 -state disabled
+	    .f.menu.edit.m entryconfigure 4 -state disabled
+	    .f.menu.edit.m entryconfigure 5 -state disabled
+	    .f.menu.file.m entryconfigure 2 -state disabled
+	}
+    } else {
+	if $oldtkversion {
+	    .f.menu.edit.m entryconfigure 0 -state normal
+	    .f.menu.edit.m entryconfigure 2 -state normal
+	    .f.menu.edit.m entryconfigure 3 -state normal
+	    .f.menu.edit.m entryconfigure 4 -state normal
+	    .f.menu.file.m entryconfigure 1 -state normal
+	} else {
+	    .f.menu.edit.m entryconfigure 1 -state normal
+	    .f.menu.edit.m entryconfigure 3 -state normal
+	    .f.menu.edit.m entryconfigure 4 -state normal
+	    .f.menu.edit.m entryconfigure 5 -state normal
+	    .f.menu.file.m entryconfigure 2 -state normal
+	}
+    }
+    pack .f.buttons.undo .f.buttons.clear .f.buttons.delete .f.buttons.add \
+        .f.buttons.change .f.buttons.search .f.buttons.auswahl \
+	-side left -expand yes -fill x -padx 0
+
+    .f.buttons.undo config -command undoAction
+    .f.buttons.clear config -command { clearAction;\
+	    .f.main.list.status.4.e delete 0 end; \
+	    focus .f.main.entry.0.entry\
+    }
+    .f.buttons.delete config -command deleteAction
+    .f.buttons.add config -command addAction
+    .f.buttons.change config -command updateAction
+    .f.buttons.search config -command searchAdr
+    .f.buttons.auswahl config -command toggleview
+
+    #
+    # Listbox
+    #
+
+    frame .f.main.list -relief raised
+    pack .f.main.list -side left -expand yes -fill y -padx 10
+    frame .f.main.list.lb
+    if $oldtkversion {
+	button .f.main.list.title -text $mes(adressbook) -relief raised \
+	    -font "$options(titlefont)" \
+	    -activebackground bisque -command showversion -padx 0 -pady 0
+        pack .f.main.list.title -pady 2 -padx 1  -fill both -expand yes
+	listbox .f.main.list.lb.box -relief sunken -geometry $options(listboxwidth)x$options(listboxheight) -yscrollcommand ".f.main.list.lb.scroll set" 
+	tk_listboxSingleSelect .f.main.list.lb.box
+	bind .f.main.list.lb.box <1> {%W select from [%W nearest %y]; showAdr [.f.main.list.lb.box curselection]; .f.main.list.status.4.e delete 0 end}
+    } else {
+	button .f.main.list.title -text $mes(adressbook) -relief raised \
+	    -font "$options(titlefont)" \
+	    -command showversion
+        pack .f.main.list.title -pady 2 -padx 1  -fill both -expand no 
+	listbox .f.main.list.lb.box -relief sunken -width $options(listboxwidth) -height $options(listboxheight) -yscrollcommand ".f.main.list.lb.scroll set" 
+	bind .f.main.list.lb.box <1> {tkListboxBeginSelect %W [%W index @%x,%y]; showAdr [.f.main.list.lb.box curselection]; .f.main.list.status.4.e delete 0 end}
+    }
+    bind .f.main.list.lb.box <Double-1> toggleselect
+    scrollbar .f.main.list.lb.scroll -orient vertical -command ".f.main.list.lb.box yview" -relief sunken
+    pack .f.main.list.lb
+    pack .f.main.list.lb.box -side left -expand yes -fill y -padx 1 
+    pack .f.main.list.lb.scroll -side right -expand yes -fill y -padx 1
+
+    frame .f.main.list.status  -height 3 -width $options(listboxwidth) -relief raised 
+    pack .f.main.list.status -pady 1 -padx 2 -side bottom -expand yes -fill x
+    label .f.main.list.status.0 -height 1 -width $options(listboxwidth) -relief raised
+    label .f.main.list.status.1 -height 1 -width $options(listboxwidth) -relief raised 
+    label .f.main.list.status.2 -height 1 -width $options(listboxwidth) -relief raised 
+    pack .f.main.list.status.0 .f.main.list.status.1 .f.main.list.status.2 -expand yes -fill x
+    set view 1
+    loadlistbox
+    setSelection 0
+    .f.main.list.status.0 configure -text "$mes(readend)"
+    .f.main.list.status.1 configure -text [format $mes(records) [expr $maxindex + 1]]
+    frame .f.main.list.status.3 -width $options(listboxwidth)
+    pack .f.main.list.status.3 -anchor center -expand yes -fill x
+    if $oldtkversion {
+	button .f.main.list.status.3.0 -bitmap @$bitmaps/le
+	button .f.main.list.status.3.1 -bitmap @$bitmaps/ll
+	button .f.main.list.status.3.2 -bitmap @$bitmaps/l
+	button .f.main.list.status.3.3 -bitmap @$bitmaps/r
+	button .f.main.list.status.3.4 -bitmap @$bitmaps/rr
+	button .f.main.list.status.3.5 -bitmap @$bitmaps/re
+    } else {
+	button .f.main.list.status.3.0 -bitmap @$bitmaps/le -highlightthickness 0
+	button .f.main.list.status.3.1 -bitmap @$bitmaps/ll -highlightthickness 0
+	button .f.main.list.status.3.2 -bitmap @$bitmaps/l  -highlightthickness 0
+	button .f.main.list.status.3.3 -bitmap @$bitmaps/r  -highlightthickness 0
+	button .f.main.list.status.3.4 -bitmap @$bitmaps/rr -highlightthickness 0
+	button .f.main.list.status.3.5 -bitmap @$bitmaps/re -highlightthickness 0
+    }
+    pack .f.main.list.status.3.0 .f.main.list.status.3.1 \
+	 .f.main.list.status.3.2 .f.main.list.status.3.3 \
+	 .f.main.list.status.3.4 .f.main.list.status.3.5 \
+	 -side left -expand yes -fill x
+
+    frame .f.main.list.status.4 -width $options(listboxwidth)
+    pack .f.main.list.status.4 -anchor center -expand yes -fill x
+    button .f.main.list.status.4.b -text $mes(goto)
+    entry .f.main.list.status.4.e -width 9 -relief sunken
+    pack .f.main.list.status.4.b -side left -expand yes -fill x
+    pack .f.main.list.status.4.e -side left -expand yes -fill x
+
+    .f.main.list.status.3.0 config -command "moveabsAdr 0"
+    .f.main.list.status.3.1 config -command "moverelAdr -10"
+    .f.main.list.status.3.2 config -command "moverelAdr -1"
+    .f.main.list.status.3.3 config -command "moverelAdr  1"
+    .f.main.list.status.3.4 config -command "moverelAdr  10"
+    .f.main.list.status.3.5 config -command "moveabsAdr -1"
+    .f.main.list.status.4.b config -command {set $lastpressed 0; .f.main.list.status.4.e delete 0 end; focus .f.main.list.status.4.e}
+
+    if !$oldtkversion {
+	bindtags .f.main.list.status.4.e ".f.main.list.status.4.e Entry ."
+    }
+    bind .f.main.list.status.4.e <Tab> "focus $f.0.entry"
+    bind .f.main.list.status.4.e <Shift-Tab> "focus $f.[expr $nbfields - 1].entry"
+    # Add 26 Buttons from A to Z
+    set a [frame .f.main.abc]
+    pack $a -side right
+    if $options(showabcbuttons) {
+	for {set i 0} {$i < 26} {incr i 2} {
+	    frame $a.frame$i
+	    pack $a.frame$i -side top -padx 0 -pady 0
+	    if $oldtkversion {
+		button $a.$i -text [format "%c" [expr $i+65]] -width 2 -padx 0 -pady 0
+		button $a.[expr $i + 1] -text [format "%c" [expr $i+66]] -width 2 -padx 0 -pady 0
+	    } else {
+		button $a.$i -text [format "%c" [expr $i+65]] -width 2 -padx 0 -pady 0 -highlightthickness 0
+		button $a.[expr $i + 1] -text [format "%c" [expr $i+66]] -width 2 -padx 0 -pady 0 -highlightthickness 0
+	    }
+	    pack $a.$i    -in $a.frame$i -side left
+	    pack $a.[expr $i + 1]  -in $a.frame$i -side right
+	}
+	
+	if $oldtkversion {
+	    for {set i 0} {$i < 26} {incr i} {
+		bind $a.$i <1> "tk_butDown %W; abcAdr $i %t"
+		set helpTopics($a.$i) $helpTopics(.f.main.abc.0)
+	    }
+	} else {
+	    for {set i 0} {$i < 26} {incr i} {
+		bind $a.$i <1> "abcAdr $i %t"
+		set helpTopics($a.$i) $helpTopics(.f.main.abc.0)
+	    }
+	}
+    }
+
+    if $oldtkversion {
+	bind .f.main.list.status.4.e <KeyPress> "abcAdr %A 0"
+    } else {
+	bind .f.main.list.status.4.e <KeyPress> "abcAdr %A 0; tkEntryBackspace %W"
+    }
+
+    # Add the mail, fax and phone buttons
+    if $options(showactionbuttons) {
+	label $a.space -height 1
+	pack $a.space -side top
+	set goodies {}
+	foreach p {phone phonepriv phonework fax email www} {
+	    if {$fields($p) >= 0} {
+		lappend goodies $p
+	    }
+	}
+	if $oldtkversion {
+	    button $a.mail  -bitmap @$bitmaps/mail  -width 36
+	} else {
+	    button $a.mail  -bitmap @$bitmaps/mail  -width 36 -highlightthickness 0
+	}
+	pack $a.mail  -side top -anchor center 
+	foreach p $goodies { 
+	    if $oldtkversion {
+		button $a.$p -bitmap @$bitmaps/$p -width 36
+	    } else {
+		button $a.$p -bitmap @$bitmaps/$p -width 36 -highlightthickness 0
+	    }
+	    pack $a.$p -side top -anchor center 
+	}
+
+	$a.mail  config -command "do_mail"
+	foreach p $goodies {
+	    .f.main.abc.$p config -command "do_callprog $p"
+	}
+    }
+
+    # init the fields and set the focus
+
+    if {$nbfields > 0} {
+	showAdr 0
+    }
+    focus .f.main.list.status.4.e
+
+    if $oldtkversion {
+	focus default .f.main.list.status.4.e
+    }
+
+    # Help text and commands follow:
+    set helpCmds(.f.menu.file.m) {getMenuTopic $topic $x $y}
+    set helpCmds(.f.menu.file.m.none) {set topic ".f.menu.file"}
+    for {set i 0} {$i < $nbfields} {incr i} {
+	set helpCmds(.f.main.entry.$i.label) "set topic .f.main.entry.$i.entry"
+	set helpTopics(.f.main.entry.$i.entry) $helpTopics(.f.main.entry.0.entry)
+    }
+}
+
+
+#------------------------------------------
+# Select a file
+#------------------------------------------
+
+proc selectfile {defaultname} {
+    global mes options select_op select_result oldtkversion
+
+    set select_result [file tail $defaultname]
+    if { $defaultname != "" } {
+	cd [file dirname $defaultname]
+    }
+
+    if [catch {toplevel .select}] {
+	raise .select
+    } else {
+	wm title .select $mes(fileselection)
+	frame .select.frame -borderwidth 2 -relief raised
+	frame .select.frame.f -relief raised
+
+        set pwd [pwd]
+	set pwd_length [string length $pwd]
+	if { $pwd_length > 40 } {
+	    set tmp "..."
+	    append tmp [string range $pwd [expr $pwd_length - 37] $pwd_length]
+	    set pwd $tmp
+	}
+	label .select.frame.pwd -width 45 -text "$pwd/*$options(select_mask)"
+	entry .select.frame.file -textvariable file_name -relief sunken
+	#set_default_entry_bindings .select.frame.file
+	focus .select.frame.file
+	set file_name [file tail $defaultname]
+	if $oldtkversion {
+	    listbox .select.frame.f.list -geometry 45x18 \
+		    -yscrollcommand ".select.frame.f.scroll set"
+	} else {
+	    listbox .select.frame.f.list -width 45 -height 18 \
+		    -yscrollcommand ".select.frame.f.scroll set"
+	}
+	scrollbar .select.frame.f.scroll -command ".select.frame.f.list yview"\
+		-relief sunken
+
+	button .select.frame.load -text $select_op -command { \
+	    if { "$file_name" != "" } { \
+	        if { [string index $file_name 0] == "/" } { \
+		    set select_result $file_name; \
+		} else { \
+		    set temp [pwd]; \
+		    append temp /; \
+		    append temp $file_name; \
+		    set select_result $temp \
+		} \
+	    }; \
+	    destroy .select }
+
+	button .select.frame.cancel -text $mes(cancel) -command { \
+	    set select_result "" ; destroy .select }
+
+	pack .select.frame -side top -fill both -expand 1
+	pack .select.frame.pwd .select.frame.file .select.frame.f \
+	    -side top -fill both -expand 1
+	pack .select.frame.load .select.frame.cancel -side left -fill x -expand 1
+	pack .select.frame.f.list -side left -fill both -expand 1
+	pack .select.frame.f.scroll -side left -anchor e -fill y -expand 1
+
+        if { "$file_name" != "" } {
+            .select.frame.load configure -text "$select_op $file_name" 
+	    .select.frame.file delete 0 end
+	    .select.frame.file insert 0 $file_name
+        } else { 
+            .select.frame.load configure -text "$select_op <$mes(nofile)>" 
+        } 
+
+	load_list .select $options(select_mask)
+
+        if $oldtkversion {
+	    bind .select.frame.f.list <Double-Button> { \
+		set choose [.select.frame.f.list get [.select.frame.f.list \
+		    curselection]]; \
+		if { [file exists $choose] == 0 } {
+	            append choose $options(select_mask)
+	        }
+		set type [file type $choose]; \
+	        if { "$type" == "directory" } { \
+		    cd $choose; \
+		    set pwd [pwd]; \
+		    set pwd_length [string length $pwd]; \
+		    if { $pwd_length > 40 } { \
+		        set tmp "..."; \
+		        append tmp [string range $pwd [expr $pwd_length - 37] $pwd_length]; \
+		        set pwd $tmp; \
+		    }; \
+		    load_list .select $options(select_mask); \
+		    .select.frame.pwd configure -text "$pwd/*$options(select_mask)"; \
+		    .select.frame.load configure -text "$select_op <$mes(nofile)>"; \
+		    set file_name "" \
+		} else { \
+		    set file_name $choose; \
+		    .select.frame.load configure -text "$select_op $file_name" \
+	        } \
+	    }
+        } else {
+	    bindtags .select.frame.f.list "Listbox .select.frame.f.list . all"
+	    bind .select.frame.f.list <1> { \
+		set choose [.select.frame.f.list get @%x,%y]; \
+		if { [file exists $choose] == 0 } {
+	            append choose $options(select_mask)
+	        }
+		set type [file type $choose]; \
+	        if { "$type" == "directory" } { \
+		    cd $choose; \
+		    set pwd [pwd]; \
+		    set pwd_length [string length $pwd]; \
+		    if { $pwd_length > 40 } { \
+		        set tmp "..."; \
+		        append tmp [string range $pwd [expr $pwd_length - 37] $pwd_length]; \
+		        set pwd $tmp; \
+		    }; \
+		    load_list .select $options(select_mask); \
+		    .select.frame.pwd configure -text "$pwd/*$options(select_mask)"; \
+		    .select.frame.load configure -text "$select_op <$mes(nofile)>"; \
+		    set file_name "" \
+		} else { \
+		    set file_name $choose; \
+		    .select.frame.load configure -text "$select_op $file_name" \
+	        } \
+	    }
+            bind .select.frame.f.list <Double-1> { \
+                if { "$file_name" != "" } { \
+            	    .select.frame.load configure -text "$select_op $file_name"; \
+		    if { [string index $file_name 0] == "/" } { \
+		        set select_result $file_name; \
+		    } else { \
+		        set temp [pwd]; \
+			append temp /; \
+			append temp $file_name; \
+			set select_result $temp; \
+		    } \
+                }; \
+		destroy .select; \
+	    }
+	}   
+	bind .select.frame.file <Leave> { \
+            if { "$file_name" != "" } { \
+            	.select.frame.load configure -text "$select_op $file_name" \
+            } else { \
+            	.select.frame.load configure -text "$select_op <$mes(nofile)>" \
+            } \
+    	}
+
+    	bind .select.frame.file <Return> { \
+            if { "$file_name" != "" } { \
+            	.select.frame.load configure -text "$select_op $file_name"; \
+		if { [string index $file_name 0] == "/" } { \
+		     set select_result $file_name; \
+		} else { \
+            	     set temp [pwd]; \
+            	     append temp /; \
+            	     append temp $file_name; \
+            	     set select_result $temp; \
+		} \
+	    }; \
+	    destroy .select; \
+	}
+    }
+}
+
+
+proc load_list args {
+    # load file names
+
+    set arglist [split $args]
+    set w [lindex $arglist 0]
+    set mask [lindex $arglist 1]
+
+    $w.frame.f.list delete 0 end
+
+    $w.frame.f.list insert end "../"
+    $w.frame.f.list insert end "/"
+    $w.frame.f.list insert end "~/"
+    foreach file [lsort [glob -nocomplain *]] {
+        set base [file tail $file]
+        set type [file type $file] 
+        if { "$type" == "directory" } {
+            append base "/"
+            $w.frame.f.list insert end "$base"
+        } elseif { "$mask" == "*" } {
+            $w.frame.f.list insert end "$base"
+        } elseif { "[file extension $file]" == "$mask" } {
+            $w.frame.f.list insert end "$base"
+        }
+    }
+}
+
+
+#------------------------------------------
+# Show Version
+#------------------------------------------
+
+proc showversion {} {
+    global options mes bitmaps version oldtkversion
+
+    toplevel .showversion
+
+    wm title .showversion "$mes(about) $mes(adressbook)"
+    wm iconname .showversion "$mes(about) $mes(adressbook)"
+    set s [frame .showversion.frame -borderwidth 2 -relief raised]
+    set f "-adobe-times-medium-r-normal--*-180-*-*-*-*-iso8859-1"
+    pack .showversion.frame -side top -fill both -expand 1
+
+    if $oldtkversion {
+	button $s.but -bitmap @$bitmaps/clemens.xbm -relief ridge
+	pack .showversion.frame.but -padx 4 -pady 4 -side left -fill both -expand 1
+    } else {
+	catch {image delete clemens}
+	image create photo clemens -file $bitmaps/clemens.gif
+	label $s.but -image clemens
+	pack .showversion.frame.but -padx 4 -pady 4 -side left -fill both
+    }
+    label $s.l1 -text $mes(adressbook) -font $f
+    label $s.l2 -text $version 
+    label $s.l3 -text "Copyright (C) 1995, 1996, 1997 Clemens Durka"
+    label $s.l4 -text "clemens@dagobah.de"
+    label $s.l5 -text "http://home.pages.de/~clemens/"
+    label $s.l6 -text "Lehrstuhl für Effiziente Algorithmen, Prof. Dr. E. Mayr"
+    label $s.l7 -text "Technische Universität München"
+    label $s.l8 -text ""
+    label $s.l9 -text "$mes(adressbook) comes with ABSOLUTELY NO WARRANTY"
+    label $s.l10 -text "This is free software, and you are welcome to redistribute it"
+    label $s.l11 -text "under the conditions of the GNU General Public Licence Version 2."
+    label $s.l12 -text "Please fill out the free REGISTRATION, if you use the program."
+    label $s.l13 -text "Comments and Bugreports are very welcome."
+
+    button .showversion.dismiss -text "OK" -command "destroy .showversion" \
+	-font -adobe-helvetica-bold-r-normal-*-14-*-*-*-*-*-iso8859-1
+
+    pack $s.l1 $s.l2 $s.l3 $s.l4 $s.l5 $s.l6 $s.l7 $s.l8 $s.l9 \
+         $s.l10 $s.l11 $s.l12 $s.l13 \
+            -ipadx 4m -side top -fill both -expand 1
+    pack .showversion.dismiss -side bottom -fill x
+}
+
+
+#------------------------------------------
+# Load Action
+#------------------------------------------
+
+proc loadAction {file} {
+    global adrfile mes select_op select_result somethingchanged
+
+    if {$file == ""} {
+	set select_op $mes(load)
+	selectfile $adrfile
+	tkwait window .select
+    } else {
+	set select_result $file
+    }
+    if { $select_result != "" } {
+	if {$somethingchanged} {
+	    set res [tk_dialog .reloadSelection $mes(load) "$mes(closemes)" \
+		    {} 0 $mes(continue) $mes(savefirst) $mes(cancel)]
+	    if {$res == 0} {doloadAction}
+	    if {$res == 1} {saveAction; doloadAction}
+	} else {
+	    doloadAction
+        }
+    }
+}
+
+
+proc doloadAction {} {
+    global mes adrfile nbfields select_result writeaccess
+
+    if {![file exists $select_result.fmt]} {
+	puts "Formatfile $select_result.fmt not found"
+	return
+    }
+    docloseAction
+
+    set adrfile $select_result
+    loaddataformatfile $adrfile.fmt
+
+    if {![file exists $select_result]} {
+	puts "Addressfile $select_result not found - initialising empty database"
+    } else {
+	loaddatabase $adrfile
+    }
+
+    if $writeaccess {
+	wm title . "$mes(adressbook) - [file tail $adrfile]"
+    } else {
+	wm title . "$mes(adressbook) - [file tail $adrfile] - READONLY"
+    }
+    wm iconname . "$mes(adressbook) - [file tail $adrfile]"
+    createfrontend
+} 
+
+
+#------------------------------------------
+# Save and Saveas Action
+#------------------------------------------
+
+proc saveAction {} {
+    global adrfile writeaccess
+
+    if $writeaccess {
+	savedatabase $adrfile
+    } else {
+	puts stderr "No write access to this file. Use save_as"
+    }
+}
+
+
+proc saveasAction {} {
+    global adrfile mes select_op select_result
+
+    set oldadrfile $adrfile
+    set select_op $mes(saveas)
+    selectfile $adrfile
+    tkwait window .select
+
+    if { "$select_result" != "" } {
+	if [file exists $select_result] {
+	    if {[tk_dialog .saveasSelection $mes(saveas) \
+		    "$mes(overwrite) $select_result" \
+		    {} 0 $mes(continue) $mes(cancel)] == 0} {
+		dosaveasAction
+	    }
+	} else {
+	    dosaveasAction
+        }
+    }
+}
+
+
+proc dosaveasAction {} {
+    global mes adrfile select_result options writeaccess oldtkversion mes
+
+    # test for lockfile
+    set lockactive [file exists $select_result.lock]
+    if {$lockactive && !$options(nolocking)} {
+	set lockfile [open $select_result.lock]
+	set user [gets $lockfile]
+	set host [gets $lockfile]
+	set pid  [gets $lockfile]
+	close $lockfile
+	tk_dialog .lock_warning "Locking" "$mes(islocked) $user; $host; $pid. $mes(choosename) $mes(nottrue) $select_result.lock" {} 0 OK
+    } else {
+	set oldadrfile $adrfile
+
+	exec cp [glob $adrfile.fmt] $select_result.fmt
+	set adrfile $select_result
+	savedatabase $adrfile
+	wm title . "$mes(adressbook) - [file tail $adrfile]"
+	wm iconname . "$mes(adressbook) - [file tail $adrfile]"
+
+	# unlock the old if we arrived here (i.e. everything was ok)
+	unlock $oldadrfile
+
+	# lock this file
+	if !$options(nolocking) {
+	    # do locking
+	    if {$options(debug) > 0} {
+		puts stderr "Locking: $adrfile"
+	    }
+	    set lf [open $adrfile.lock w]
+	    set hostname ""
+	    set user ""
+	    catch {set hostname [exec hostname]}
+	    catch {set user [exec whoami]}
+	    puts $lf "user: $user"
+	    puts $lf "host: $hostname"
+	    puts $lf "process: [pid]"
+	    close $lf
+	}
+	if {!$writeaccess} {
+	    # reactivate buttons
+	    .f.buttons.undo config -state normal
+	    .f.buttons.delete config -state normal
+	    .f.buttons.add config -state normal
+	    .f.buttons.change config -state normal
+	    if $oldtkversion {
+		.f.menu.edit.m entryconfigure 0 -state normal
+		.f.menu.edit.m entryconfigure 2 -state normal
+		.f.menu.edit.m entryconfigure 3 -state normal
+		.f.menu.edit.m entryconfigure 4 -state normal
+		.f.menu.file.m entryconfigure 1 -state normal
+	    } else {
+		.f.menu.edit.m entryconfigure 1 -state normal
+		.f.menu.edit.m entryconfigure 3 -state normal
+		.f.menu.edit.m entryconfigure 4 -state normal
+		.f.menu.edit.m entryconfigure 5 -state normal
+		.f.menu.file.m entryconfigure 2 -state normal
+	    }
+	    set writeaccess 1
+	}
+    }
+}
+
+
+
+#------------------------------------------
+# Close Action
+#------------------------------------------
+
+proc closeAction {} {
+    global mes somethingchanged
+
+    if {$somethingchanged} {
+	set res [tk_dialog .closeSelection $mes(close) "$mes(closemes)" \
+		{} 0 $mes(close) $mes(savefirst) $mes(cancel)]
+	if {$res == 0} {docloseAction} 
+	if {$res == 1} {saveAction; docloseAction}
+    } else {
+	docloseAction
+    }
+}
+
+
+proc docloseAction {} {
+    global mes somethingchanged writeaccess adrfile options
+
+    if { [wm title .] != "$mes(adressbook)"} {
+	destroy .f.main .f.buttons
+    }
+    wm title . "$mes(adressbook)"
+    wm iconname . "$mes(adressbook)"
+    set somethingchanged 0
+    unlock $adrfile
+}
+
+
+proc unlock {filename} {
+    global options writeaccess
+    if {$writeaccess && !$options(nolocking)} {
+	if {[file exists $filename.lock]} {
+	    exec rm [glob $filename.lock]
+	    if {$options(debug) > 1} {
+		puts stderr "Unlocking: $filename."
+	    }
+	}
+    }
+}
+
+
+
+#------------------------------------------
+# Import Action
+#------------------------------------------
+
+proc importAction {} {
+    global mes
+
+    tk_dialog .fileSelection $mes(import) "Not implemented yet. If you have a suggestion which format is worth to import or if you want to help, please write me a email." {} 0 OK
+}
+
+
+#------------------------------------------
+# Export Action
+#------------------------------------------
+
+proc exportAction {} {
+    global mes options names nbfields exportfields
+
+    set possible_exportform {name nametel address addresstel almostever everything}
+    set possible_exportopt {text ascii latex}
+    set possible_exportarea {all region selection}
+    if [catch {toplevel .export}] {
+	raise .export
+    } else {
+	wm title .export $mes(export)
+	wm geometry .export +200+150
+	frame .export.b -relief raised -border 1
+	pack .export.b -fill both
+	set body [frame .export.b.b]
+	pack .export.b.b -fill both -padx 7 -pady 7
+
+	set maxwidth 15
+    	
+	label $body.top -text $mes(toexport)
+	pack $body.top -side top
+	
+	frame $body.0 -borderwidth 2 
+	pack $body.0 -fill y
+	set f1 [frame $body.0.l -borderwidth 2]
+	set f2 [frame $body.0.r -borderwidth 2]
+	pack $f1 $f2 -side left
+	set half [expr $nbfields / 2]
+	set j $half
+	for {set i 0} {$i <= $half} {incr i} {
+	    checkbutton $f1.$i -text [lindex $names $i] -variable exportfields($i)	
+	    pack $f1.$i -side top -anchor w
+	    incr j
+	    if {$j < $nbfields} {
+		checkbutton $f2.$j -text [lindex $names $j] -variable exportfields($j)
+		pack $f2.$j -side top -anchor w
+	    }
+	}
+    
+	frame $body.1 -borderwidth 2 
+	pack $body.1 -fill both
+	label $body.1.l -text $mes(output) -width $maxwidth
+	pack $body.1.l -side left
+	set f [frame $body.1.r -borderwidth 2]
+	pack $f -side left
+	foreach c $possible_exportopt {
+	    radiobutton $f.$c -text $mes($c) -variable options(exportopt) -value $c	
+	    pack $f.$c -side top -anchor w
+	}
+    
+	set f [frame $body.3 -borderwidth 2]
+	pack $f -fill both
+	label $f.l -text $mes(region) -width $maxwidth
+	pack $f.l -side left
+	foreach c $possible_exportarea {
+	    radiobutton $f.$c -text $mes($c) -variable options(exportarea) -value $c	
+	    pack $f.$c -side left
+	}
+
+	set f [frame $body.4 -borderwidth 2]
+	pack $f -fill both
+	label $f.l1 -text $mes(from) -width $maxwidth
+	label $f.l2 -text $mes(to) -width 8
+	pack $f.l1 -side left
+	entry $f.e1 -width 8 -relief sunken
+	pack $f.e1 -side left -fill x -expand true
+	$f.e1 insert 0 $options(from)
+	pack $f.l2 -side left
+	entry $f.e2 -width 8 -relief sunken
+	pack $f.e2 -side left -fill x -expand true
+	$f.e2 insert 0 $options(to)
+
+	set f [frame $body.5 -borderwidth 2]
+	pack $f -fill both
+	label $f.l -text $mes(exportfile) -width $maxwidth
+	pack $f.l -side left
+	entry $f.e -width 8 -relief sunken
+	pack $f.e -side left -fill x -expand true
+	$f.e insert 0 $options(exportfile)
+
+	set f [frame $body.6 -borderwidth 2]
+	pack $f -fill both
+	label $f.l -text $mes(separatorchar) -width $maxwidth
+	pack $f.l -side left
+	entry $f.e -width 8 -relief sunken
+	pack $f.e -side left -fill x -expand true
+	$f.e insert 0 $options(exportseparator)
+
+	set bot [frame .export.bot -border 1 -relief raised]
+	pack $bot -fill both
+	button $bot.ok -text $mes(export) -command {set options(from) [.export.b.b.4.e1 get]; set options(to) [.export.b.b.4.e2 get]; set options(exportfile) [.export.b.b.5.e get]; set options(exportseparator) [.export.b.b.6.e get]; destroy .export; exportAdr}
+	pack $bot.ok -side left -expand yes -padx 10 -pady 10
+	button $bot.cancel -text $mes(cancel) -command "destroy .export"
+	pack $bot.cancel -side left -expand yes -padx 10
+    }
+}
+
+
+#------------------------------------------
+# Quit Action
+#------------------------------------------
+
+proc quitAction {} {
+    global mes somethingchanged
+
+    if {$somethingchanged} {
+	set res [tk_dialog .quitSelection $mes(exit) "$mes(quitmes)" {} 0 \
+		$mes(exit) $mes(savefirst) $mes(cancel)]
+	if {$res == 0} {docloseAction; exit} 
+	if {$res == 1} {saveAction; docloseAction; exit}
+    } else {
+	docloseAction
+        exit
+    }
+}
+
+
+#------------------------------------------
+# Print Action
+#------------------------------------------
+
+proc printAction {} {
+    global mes options possible_printopt
+
+    set possible_printform {name nametel address addresstel almostever everything}
+    set possible_printopt {text ascii latex ps canvas userdef}
+    set possible_printtype {box line}
+    set possible_printarea {all region selection}
+    if [catch {toplevel .print}] {
+	raise .print
+    } else {
+	wm title .print $mes(print)
+	wm geometry .print +200+150
+	frame .print.b -relief raised -border 1
+	pack .print.b -fill both
+	set body [frame .print.b.b]
+	pack .print.b.b -fill both -padx 7 -pady 7
+
+	set maxwidth 15
+    	
+	frame $body.0 -borderwidth 2 
+	pack $body.0 -fill both
+	label $body.0.l -text $mes(printform) -width $maxwidth
+	pack $body.0.l -side left
+	set f [frame $body.0.r -borderwidth 2]
+	pack $f -side left
+	foreach c $possible_printform {
+	    radiobutton $f.$c -text $mes($c) -variable options(printform) -value $c	
+	    pack $f.$c -side top -anchor w
+	}
+    
+	frame $body.1 -borderwidth 2 
+	pack $body.1 -fill both
+	label $body.1.l -text $mes(output) -width $maxwidth
+	pack $body.1.l -side left
+	set f [frame $body.1.r -borderwidth 2]
+	pack $f -side left
+	foreach c $possible_printopt {
+	    radiobutton $f.$c -text $mes($c) -variable options(printopt) -value $c	
+	    pack $f.$c -side top -anchor w
+	}
+    
+	set f [frame $body.2 -borderwidth 2]
+	pack $f -fill both
+	label $f.l -text $mes(addressas) -width $maxwidth
+	pack $f.l -side left
+	foreach c $possible_printtype {
+	    radiobutton $f.$c -text $mes($c) -variable options(printtype) -value $c	
+	    pack $f.$c -side left
+	}
+    
+	set f [frame $body.3 -borderwidth 2]
+	pack $f -fill both
+	label $f.l -text $mes(region) -width $maxwidth
+	pack $f.l -side left
+	foreach c $possible_printarea {
+	    radiobutton $f.$c -text $mes($c) -variable options(printarea) -value $c	
+	    pack $f.$c -side left
+	}
+
+	set f [frame $body.4 -borderwidth 2]
+	pack $f -fill both
+	label $f.l1 -text $mes(from) -width $maxwidth
+	label $f.l2 -text $mes(to) -width 8
+	pack $f.l1 -side left
+	entry $f.e1 -width 8 -relief sunken
+	pack $f.e1 -side left -fill x -expand true
+	$f.e1 insert 0 $options(from)
+	pack $f.l2 -side left
+	entry $f.e2 -width 8 -relief sunken
+	pack $f.e2 -side left -fill x -expand true
+	$f.e2 insert 0 $options(to)
+
+	set f [frame $body.5 -borderwidth 2]
+	pack $f -fill both
+	label $f.l -text $mes(printfile) -width $maxwidth
+	pack $f.l -side left
+	entry $f.e -width 8 -relief sunken
+	pack $f.e -side left -fill x -expand true
+	$f.e insert 0 $options(printfile)
+
+	set bot [frame .print.bot -border 1 -relief raised]
+	pack $bot -fill both
+	button $bot.ok -text $mes(print) -command {set options(from) [.print.b.b.4.e1 get]; set options(to) [.print.b.b.4.e2 get]; set options(printfile) [.print.b.b.5.e get]; destroy .print; printAdr}
+	pack $bot.ok -side left -expand yes -padx 10 -pady 10 
+	button $bot.cancel -text $mes(cancel) -command "destroy .print"
+	pack $bot.cancel -side left -expand yes -padx 10
+    }
+}
+
+
+#------------------------------------------
+# Look for maxima
+#------------------------------------------
+
+proc lookmax {} {
+    global adrbook nbfields maxlength maxindex
+
+    for {set i 0} {$i <= $maxindex} {incr i} {
+	set line $adrbook($i)
+	for {set j 0} {$j < $nbfields} {incr j} {
+	    if {[string length [lindex $line $j]] > $maxlength($j)} {
+		set maxlength($j) [string length [lindex $line $j]]
+	    }
+	}
+    }
+}
+
+#------------------------------------------
+# Convert special chars to tex notation
+#------------------------------------------
+
+proc converttotex line {
+
+    set result {}
+    set index 0
+    # there is always a trailing space
+    # set end [expr [string length $line] - 1]
+    # no more true -- that there is always a trailing space
+    set end [string length $line]
+
+    while {$index < $end} {
+
+    	switch -exact -- [string index $line $index] {
+	    "&"	    { append result {\&} }
+	    "%"	    { append result {\%} }
+	    "#"     { append result {\#} }
+	    "_"     { append result {\_} }
+	    "^"     { append result {\^} }
+	    "ä"     { append result {\"a} }
+	    "ë"     { append result {\"e} }
+	    "ï"     { append result {\"{\i}} }
+	    "ö"     { append result {\"o} }
+	    "ü"     { append result {\"u} }
+	    "Ä"     { append result {\"A} }
+	    "Ë"     { append result {\"E} }
+	    "Ï"     { append result {\"I} } 
+	    "Ö"     { append result {\"O} }
+	    "Ü"     { append result {\"U} }
+	    "á"     { append result {\'a} }
+	    "é"     { append result {\'e} }
+	    "í"     { append result {\'{\i}} }
+	    "ó"     { append result {\'o} }
+	    "ú"     { append result {\'u} }
+	    "â"     { append result {\^a} }
+	    "ê"     { append result {\^e} }
+	    "î"     { append result {\^{\i}} }
+	    "ô"     { append result {\^o} }
+	    "û"     { append result {\^u} }
+	    "à"     { append result {\`a} }
+	    "è"     { append result {\`e} }
+	    "ì"     { append result {\`{\i}} }
+	    "ò"     { append result {\`o} }
+	    "ù"     { append result {\`u} }
+	    "ß"     { append result {\ss{}} }
+	    "Æ"     { append result {\AE{}} }
+	    "æ"     { append result {\ae{}} }
+	    ""     { append result {\OE{}} }
+	    ""     { append result {\oe{}} }
+	    "Ø"     { append result {\O{}} }
+	    "ø"     { append result {\o{}} }
+	    "Å"     { append result {\AA{}} }
+	    "å"     { append result {\aa{}} }
+	    ""     { append result {\L{}} }
+	    ""     { append result {\l{}} }
+	    "Ç"     { append result {\c{C}} }
+	    "ç"     { append result {\c{c}} }
+	    "ñ"     { append result {\~n} }
+	    "Ñ"     { append result {\~N} }
+	    " "     {
+		if {[string index $line [expr $index - 1]] == "."} {
+		    append result {~}
+		} else {
+		    append result { }
+		}
+	    }
+	    "\\"     { 
+		if { [expr $index + 1] < $end} {
+		    incr index
+		    switch -exact -- [string index $line $index] {
+			"!"	    { append result {!}}
+			"i"         { append result "{\i}"}
+			default { append result "\\"; 
+			          append result [string index $line $index]
+		        }
+		    }
+		} else {
+		    append result "\\"
+		}
+	    }
+	    default { append result [string index $line $index] }
+	}
+	incr index
+    }
+	
+    return $result
+}
+
+#------------------------------------------
+# Format the formatline
+#------------------------------------------
+
+proc formatline1 {fmt} {
+    global fields countries options maxlength lgt
+
+    set idx 0
+    foreach a $fmt {
+	set length 0
+	foreach b $a {
+	    switch -exact $b {
+		","   -
+		"-"   {
+		    incr length
+		}
+		"fullcountry" {
+		    incr length 20
+		}
+		"countryzipcity" {
+		    incr length $maxlength($fields(zip))
+		    incr length $maxlength($fields(state))
+		    incr length $maxlength($fields(city))
+		    incr length 7
+		}
+		"zipcity" {
+		    incr length $maxlength($fields(zip))
+		    incr length $maxlength($fields(state))
+		    incr length $maxlength($fields(city))
+		    incr length 6
+		}
+		default {
+		    if {$maxlength($fields($b)) > 0} {
+			incr length $maxlength($fields($b))
+			incr length
+		    }
+		}
+	    }
+	}
+	set lgt($idx) $length
+	incr idx
+    }
+    return idx
+}
+
+
+#------------------------------------------
+# Format one line of output
+#------------------------------------------
+
+proc formatline {line fmt sep conv opt} {
+    global fields countries options maxlength lgt
+     
+    set result {}
+
+    set c [lindex $line $fields(country)]
+    if {![info exists countries($c,fullname)]} {
+	set c $options(mycountry)
+    }
+
+    set ind [lsearch -exact $fmt zipcity]
+    if { $ind > -1} {
+	set city $options(zipformat,$countries($c,zipformat))
+	if {($options(mycountry) != $c) && ([lsearch -exact $fmt "- country="] < 0) && ($countries($c,zipformat) == "eu")} {
+	    set city "- country $city"
+	}
+	set fmt [lreplace $fmt $ind $ind $city]
+    
+	if {$options(mycountry) != $c} {lappend printline "fullcountry"}
+    }
+
+    set ind [lsearch -exact $fmt countryzipcity]
+    if { $ind > -1} {
+	set city $options(zipformat,$countries($c,zipformat))
+	set fmt [lreplace $fmt $ind $ind "- country= $city"]
+
+	if {$options(mycountry) != $c} {lappend printline "fullcountry"}
+    }
+    
+#    set ind [lsearch -exact $fmt "mrmrs title"]
+#    if { $ind > -1} {
+#	if {[string index [lindex $line $fields(mrmrs)] 0] == "M"} {
+#	    set fmt [lreplace $fmt $ind $ind "mrmrs"]
+#	}
+#    }
+
+    if {$options(debug) > 3} {
+	puts stderr $fmt
+    }
+
+    set idx 0
+    foreach a $fmt {
+	set space " "
+	set res {}
+	set nl 0
+	foreach b $a {
+	    if {$b == ","} {
+		set space ", "
+	    } elseif {$b == "-"} { 
+		set space "-"
+	    } else {
+	    	if {$b == "fullcountry"} {
+		    if {$options(mycountry) != $c} {
+			append res "$countries($c,fullname)$space"
+			set space " "
+			incr nl
+		    }
+		} elseif {$b == "country="} {
+		    if {$opt == "fill"} {
+			append res [format "%4s%s" [lindex $line $fields(country)] $space]
+		    } else {
+			append res "[lindex $line $fields(country)]$space"
+		    }
+		    set space " "
+		    incr nl
+		} else {
+		    set entry [lindex $line $fields($b)]
+	    	    if {$entry != ""} {
+			append res "[lindex $line $fields($b)]$space"
+			set space " "
+			incr nl
+		    }
+		}
+	    }
+	}
+
+	if {$conv == "tex"} { 
+	    set res [converttotex $res]
+	}
+
+	if {$options(debug) > 3} {
+	    puts stderr "$a: $res"
+	}
+
+	if {$opt == "fill"} {
+	    append result [format "%-$lgt($idx)\s" $res]
+	} else {
+	    append result $res
+	    if {($opt == "alwayssep") || ($nl > 0)} {
+		append result $sep
+	    }
+	}
+	incr idx
+    }
+    if {$options(debug) > 3} {
+	puts stderr "$result"
+    }
+    return $result
+}
+
+
+#------------------------------------------
+# Print Addresslist
+#------------------------------------------
+
+proc printAdr {} {
+    global mes options nbfound found adrbook fields selected
+
+    if {$options(printopt) == "canvas"} {
+	printcanvas
+	return
+    }
+    if {$options(printarea) == "region"} {
+    	set from [expr $options(from) + 1]
+	set to [expr $options(to) + 1]
+    } else {
+    	set from 0
+	set to [expr $nbfound - 1]
+    }
+
+    set f [open /tmp/addr_print.tmp w]
+
+    set printopt $options(printtype)$options(printopt)
+
+    # prolog for each printopt
+    switch -exact $options(printopt) {
+        text	{
+	    if {$options(printtype) == "line"} {
+		lookmax
+		formatline1 $options(print,$options(printform))
+	    }
+	}
+        ascii	{
+	    if {$options(printtype) == "line"} {
+		lookmax
+		formatline1 $options(print,$options(printform))
+	    }
+	}
+        latex	{
+	    puts $f "\\documentclass{article}"
+	    puts $f "\\setlength{\\oddsidemargin}{0,0cm}"
+	    puts $f "\\setlength{\\topmargin}{0,0cm}"
+	    puts $f "\\setlength{\\textwidth}{16cm}"
+	    puts $f "\\begin{document}"
+	    puts $f "\\footnotesize"
+	    set s "\\begin{tabular}{"
+	    set printline $options(print,$options(printform))
+	    for {set i 0} {$i <= [llength $printline]} {incr i} {
+		append s "l"
+	    }
+	    set ind [lsearch -exact $printline countryzipcity]
+	    if {($ind > -1) && ($options(printtype) == "line")} {
+		append s "l"
+		set printline [lreplace $printline $ind $ind "- country=" "zipcity"]
+	    }
+	    puts $f "$s}"
+	}
+        ps	{
+	    if {$options(printtype) == "line"} {
+		lookmax
+		formatline1 $options(print,$options(printform))
+	    }
+	}
+	userdef {
+	    puts -nonewline $f "$options(userhead)"
+	    set printline $options(print,$options(printform))
+	    if {!$options(userincludecolumns)} {
+		set s "{"
+		for {set i 0} {$i <= [llength $printline]} {incr i} {
+		    append s "l"
+		}
+		set ind [lsearch -exact $printline countryzipcity]
+		if {($ind > -1) && ($options(printtype) == "line")} {
+		    append s "l"
+		    set printline [lreplace $printline $ind $ind "- country=" "zipcity"]
+		}
+		puts $f "$s}"
+	    }
+	}
+    }
+
+    set i $from
+    while {$i <= $to} {
+	if {($options(printarea) != "selection") || $selected([lindex $found $i])} {
+	    set line $adrbook([lindex $found $i])
+
+	    switch -exact $printopt {
+		boxtext	{
+		    puts $f [formatline $line $options(print,$options(printform)) "\n" none none]
+		}
+		linetext	{
+		    puts $f [formatline $line $options(print,$options(printform)) "\t" none fill]
+		}
+		boxascii	{
+		    puts $f [formatline $line $options(print,$options(printform)) "\n" tex none]
+		}
+		lineascii	{
+		    puts $f [formatline $line $options(print,$options(printform)) "\t" tex fill]
+		}
+		boxlatex	{
+		    puts $f [formatline $line $printline " \\\\\n" tex none ]\\\\\\\\
+		}
+		linelatex	{
+		    puts $f [formatline $line $printline " & " tex alwayssep]\\\\
+		}
+		boxps	{
+		    puts $f [formatline $line $options(print,$options(printform)) "\t" none none]
+		}
+		lineps	{
+		    puts $f [formatline $line $options(print,$options(printform)) "\t" none fill]
+		}
+		boxuserdef	{
+		    puts $f [formatline $line $printline " \\\\\n" tex none ]\\\\\\\\
+		}
+		lineuserdef	{
+		    puts $f [formatline $line $printline " & " tex alwayssep]\\\\
+		}
+	    }
+	}
+	incr i
+    }
+
+    # epilog for each printopt
+    switch -exact $options(printopt) {
+        text	{
+	}
+        ascii	{
+	}
+        latex	{
+	    puts $f "\\end{tabular}"
+	    puts $f "\\end{document}"
+	}
+        ps	{
+	}
+	userdef {
+	    puts $f $options(usertail)
+	}
+    }
+
+    close $f
+
+    # call further programms
+    switch -exact $options(printopt) {
+        text	{
+	    exec mv /tmp/addr_print.tmp /tmp/addr_print.out
+	}
+        ascii	{
+	    exec mv /tmp/addr_print.tmp /tmp/addr_print.out
+	}
+        latex	{
+	    set cwd [pwd]
+	    cd /tmp
+	    exec cp /tmp/addr_print.tmp /tmp/addr_print.tex
+	    exec $options(latex) /tmp/addr_print.tex
+	    catch {exec $options(dvips) /tmp/addr_print.dvi}
+	    exec mv /tmp/addr_print.ps  /tmp/addr_print.out
+            cd $cwd
+	}
+        ps	{
+	    if {$options(mpage) != ""} {
+		set cwd [pwd]
+		cd /tmp
+		exec mv /tmp/addr_print.tmp /tmp/$mes(adressbook)
+		# Call mpage to convert the text to postscript
+		catch {exec $options(mpage) -H -A -W170 -1 -S -CISO+STD+OTH -L140 $mes(adressbook) > /tmp/addr_print.out}
+		exec rm /tmp/$mes(adressbook)
+	    } else if {$options(a2ps) != ""} {
+		# If you dont have mpage, call a2ps
+		catch {exec $options(a2ps) -1 -F6.0 -nL -p -8 /tmp/addr_print.tmp > /tmp/addr_print.out}
+	    }
+	}
+	userdef {
+	    if {$options(usercalllatex)} {
+		set cwd [pwd]
+		cd /tmp
+		exec cp /tmp/addr_print.tmp /tmp/addr_print.tex
+		exec $options(latex) /tmp/addr_print.tex
+		catch {exec $options(dvips) /tmp/addr_print.dvi}
+		exec mv /tmp/addr_print.ps  /tmp/addr_print.out
+		cd $cwd
+	    } else {
+		exec mv /tmp/addr_print.tmp /tmp/addr_print.out
+	    }
+	}
+    }
+    
+    # copy the temporary file to the final one, even if it is a pipe
+    set f [open /tmp/addr_print.out r]
+    set g [open $options(printfile) w]
+    while {![eof $f]} {
+	puts $g [gets $f]
+    }
+    close $g
+    close $f
+
+    # Unset removetmp if you want to modify the texfile
+    # before printing.
+    if {$options(removetmp)} {
+	exec sh -c {rm /tmp/addr_print.*}
+    }
+}
+
+
+#------------------------------------------
+# Print with canvas directly to postscript
+#------------------------------------------
+
+proc printcanvas {} {
+    global mes options nbfound found adrbook fields selected maxx maxy
+    global adrbook selected
+
+    if {$options(printarea) == "region"} {
+    	set from [expr $options(from) + 1]
+	set to [expr $options(to) + 1]
+    } else {
+    	set from 0
+	set to [expr $nbfound - 1]
+    }
+
+    set xstart 10
+    set ystart 10
+    set xspace 0
+    set yoffset 14
+
+    if [catch {toplevel .p}] {
+	raise .p
+    } else {
+	wm title .p $mes(print)
+	wm geometry .p +200+150
+	#frame .p.b -relief raised -border 1
+	#pack .p.b -fill both
+	set c [canvas .p.c]
+	pack $c -fill both -padx 2 -pady 2
+
+	set formatline $options(print,$options(printform))
+	set l [llength $formatline]
+	set x $xstart
+	
+	set i $from
+	while {$i <= $to} {
+	    if {($options(exportarea) != "selection") || $selected([lindex $found $i])} {
+		set line($i) [split [formatline $adrbook([lindex $found $i]) $formatline ";" none alwayssep] ";"]
+	    }
+	    puts $line($i)
+	    incr i
+	}
+	
+	for {set j 0} {$j < $l} {incr j} {
+	    set i $from
+	    set y $ystart
+	    while {$i <= $to} {
+		if {($options(exportarea) != "selection") || $selected([lindex $found $i])} {
+		    $c creat text $x $y -text [lindex $line($i) $j] -anchor nw -tags col$j
+		puts [lindex $line($i) $j]
+		}
+		incr y $yoffset
+		incr i
+	    }
+	    set box [$c bbox col$j]
+	    if {$options(debug) > 3} {
+		puts "[$c gettags 1] $box"
+	    }
+	    set x [lindex $box 2]
+	    incr x $xspace
+	}
+	
+	set maxx $x
+	set maxy $y
+
+	$c configure -height $maxy -width $maxx
+
+	set bot [frame .p.bot -border 1 -relief raised]
+	pack $bot -fill both
+	button $bot.ok -text $mes(print) -command ".p.c postscript -file $options(printfile) -height $maxx -rotate 0 -pageheight 29.7c; destroy .p"
+#	button $bot.ok -text $mes(print) -command ".p.c postscript -file $options(printfile) -width $maxy -rotate 0 -pageheight 29.7c; destroy .p"
+#	button $bot.ok -text $mes(print) -command ".p.c postscript -file $options(printfile) -width $maxx -height $maxy -rotate 0 -pageheight 29.7c; destroy .p"
+	pack $bot.ok -side left -expand yes -padx 10 -pady 10
+	button $bot.cancel -text $mes(cancel) -command "destroy .p"
+	pack $bot.cancel -side left -expand yes -padx 10
+    
+    }
+}
+
+#------------------------------------------
+# Print Addresslist old version
+#------------------------------------------
+
+proc adrliste {} {
+    global adrbook printfile countries maxindex
+
+    set f [open /tmp/adressliste w]
+    set i 0
+    while { $i <= $maxindex } {
+        set akt $adrbook($i)
+        # Name
+	set name [concat [lindex $akt 0] [lindex $akt 1]] 
+	# Strasse
+	set str {}
+	if {[lindex $akt 2] == {} } {
+	    set str [lindex $akt 3] 
+	} else { 
+	    set str [format "%s, %s" [lindex $akt 2] [lindex $akt 3]]  
+	}
+	# Telefon
+	set tel {}
+	if { [lindex $akt 11] != {} } {
+	    set tel [format "%s, %s, %s" [lindex $akt 8] [lindex $akt 9] \
+	             [lindex $akt 10]]
+	} else { 
+	    if { [lindex $akt 9] != {} } {
+	    	set tel [format "%s, %s" [lindex $akt 8] [lindex $akt 9]]
+	    } else {
+	    	set tel [lindex $akt 8]
+	    }
+	}
+	if { $tel != {} } { 
+	    set tel [format "+%s %s" $countries([lindex $akt 4],intl_prefix) $tel]
+	} 
+	
+	puts $f [format "%-27s%-49s%3s-%-6s%-31s%-10s %s" $name $str \
+	  [lindex $akt 4] [lindex $akt 5] [lindex $akt 6] [lindex $akt 7] $tel]
+	set i [expr $i+1]
+    }
+    close $f
+}
+
+
+#------------------------------------------
+# Export to an other format
+#------------------------------------------
+
+proc exportAdr {} {
+    global mes nbfields adrbook nbfound fields found options exportfields
+    global selected nbfields
+
+    set filename $options(exportfile)
+
+    if {$options(debug)>2} {
+	puts stderr "Exporting database: $filename"
+    }
+    if {$options(makebackup)} {
+	if [file exists $filename] {
+	    exec cp -p [glob $filename] [glob $filename].bak
+	}
+    }
+    set f [open $filename w]
+
+    if {$options(exportarea) == "region"} {
+    	set from [expr $options(from) + 1]
+	set to [expr $options(to) + 1]
+    } else {
+    	set from 0
+	set to [expr $nbfound - 1]
+    }
+
+    set i $from
+    while {$i <= $to} {
+	if {($options(exportarea) != "selection") || $selected([lindex $found $i])} {
+	    set line $adrbook([lindex $found $i])
+	    for {set j [expr $nbfields - 1]} {$j >= 0} {incr j -1} {
+		if !$exportfields($j) {
+		    set line [lreplace $line $j $j]
+		}
+	    }
+	    puts $f [join $line $options(exportseparator)]
+	}
+	incr i
+    }
+
+    close $f
+    .f.main.list.status.2 configure -text $mes(exported)
+}
+
+
+#------------------------------------------
+# Delete a record
+#------------------------------------------
+
+proc deleteAction {} {
+    global mes maxindex currentindex options
+
+    if $options(confirmdelete) {
+	if {[tk_dialog .deleteSelection $mes(delete) "$mes(deleterecord)" {} 0 OK $mes(cancel)] == 0} {
+	    deleterecord $currentindex
+	    loadlistbox
+	    set message [format $mes(recorddeleted) [expr $currentindex +1 ]]
+	    if {$currentindex > $maxindex} {set currentindex $maxindex}
+	    setSelection $currentindex
+	    showAdr $currentindex
+	    .f.main.list.status.2 configure -text "$message"
+	}
+    } else {
+	deleterecord $currentindex
+	loadlistbox
+	set message [format $mes(recorddeleted) [expr $currentindex +1 ]]
+	if {$currentindex > $maxindex} {set currentindex $maxindex}
+	setSelection $currentindex
+	showAdr $currentindex
+	.f.main.list.status.2 configure -text "$message"
+    }
+}
+
+
+#------------------------------------------
+# Add a new record
+#------------------------------------------
+
+proc addAction {} {
+    global mes options
+
+    if $options(confirm) {
+	if {[tk_dialog .addSelection $mes(add) "$mes(addrecord)" {} 0 OK $mes(cancel)] == 0} {addrecord}
+    } else {
+	addrecord
+    }
+}    
+
+
+#------------------------------------------
+# Update a existing record
+#------------------------------------------
+
+proc updateAction {} {
+    global mes currentindex options lastaction
+
+    if $options(confirm) {
+	if {[tk_dialog .updateSelection $mes(update) "$mes(changerecord)" {} 0 OK $mes(cancel)] == 0} {deleterecord $currentindex; addrecord; set lastaction update}
+    } else {
+	deleterecord $currentindex
+	addrecord
+	set lastaction update
+    }
+}
+
+
+#------------------------------------------
+# Add record in databasearray adrbook
+#------------------------------------------
+
+proc addrecord {} {
+    global adrbook options maxindex fields nbfields mes somethingchanged
+    global lastaction lastadded selected view
+    # Read in new address
+    set line {}
+    for {set i 0} {$i < $nbfields} {incr i} {
+	lappend line [.f.main.entry.$i.entry get]
+    }
+    set a 0
+    set b $maxindex
+    set sort1 $fields(sort1)
+    set sort2 $fields(sort2)
+    set search1 [lindex $line $sort1]
+    set search2 [lindex $line $sort2]
+    # Binary Search for sorted insert (until a + 1 = b)
+    while {$b - $a > 1} {
+	set c [expr ($a+$b) / 2]
+	if {[string compare [lindex $adrbook($c) $sort1] $search1] < 0} {
+	    set a $c
+	} else {
+	    set b $c
+	}
+    }
+    # Exact linear search with 2nd searchkat
+    while {($a <= $maxindex) && \
+	  (([string compare [lindex $adrbook($a) $sort1] $search1] < 0) || \
+	   (([string compare [lindex $adrbook($a) $sort1] $search1] == 0) && \
+            ([string compare [lindex $adrbook($a) $sort2] $search2] <= 0)))} {
+        incr a
+    }
+    # Move array to make place for new entry (not very efficient)
+    incr maxindex
+    for {set i $maxindex} {$i > $a} {} {
+	set selected($i) $selected([expr $i - 1])
+	set adrbook($i) $adrbook([incr i -1])
+    }
+    # Insert in databasearray at point a
+    set adrbook($a) $line
+    set selected($a) [expr !$view]
+    loadlistbox
+    showAdr $a
+    .f.main.list.status.2 configure -text [format $mes(recordchanged) [expr $a + 1]]    
+    setSelection $a
+    set lastadded $a
+    set lastaction add
+    incr somethingchanged
+}
+
+#------------------------------------------
+# Delete record
+#------------------------------------------
+
+proc deleterecord {index} {
+    global adrbook maxindex somethingchanged lastline lastaction selected
+
+    # save the deleted record for undo
+    set lastline $adrbook($index)
+    set lastaction delete
+    # move the rest of the array to avoid empty fields (not very efficient)
+    for {set i $index} {$i < $maxindex} {} {
+	set selected($i) $selected([expr $i + 1])
+	set adrbook($i) $adrbook([incr i])
+    }
+    incr maxindex -1
+    incr somethingchanged
+}
+
+
+#------------------------------------------
+# Clear the Edit Fields
+#------------------------------------------
+
+proc clearAction {} {
+    global nbfields
+
+    # Felder loeschen
+    for {set i 0} {$i < $nbfields} {incr i} {
+	.f.main.entry.$i.entry delete 0 end
+    }
+}
+
+
+#----------------------------------------------------
+# Undo the last command
+#----------------------------------------------------
+
+proc undoAction {} {
+    global lastaction lastline lastadded nbfields maxindex mes
+    if {$lastaction == "delete"} {
+	for {set i 0} {$i < $nbfields} {incr i} {
+	    .f.main.entry.$i.entry delete 0 end
+	    .f.main.entry.$i.entry insert 0 [lindex $lastline $i]
+	}
+	addrecord
+    } else {
+
+	if {$lastaction == "add"} {
+	    deleterecord $lastadded
+	    loadlistbox
+	    setSelection $lastadded
+	    showAdr $lastadded
+	    .f.main.list.status.2 configure -text "[format $mes(recorddeleted) [expr $lastadded + 1]]"
+	} else {
+
+	    if {$lastaction == "update"} {
+		for {set i 0} {$i < $nbfields} {incr i} {
+		    .f.main.entry.$i.entry delete 0 end
+		    .f.main.entry.$i.entry insert 0 [lindex $lastline $i]
+		}
+		deleterecord $lastadded
+		addrecord
+		set lastaction update
+	    }
+	}
+    }
+}
+
+
+#----------------------------------------------------
+# Set selection in listbox
+#----------------------------------------------------
+
+proc setSelection i {
+    global nbfound currentselection oldtkversion options
+
+    if {$i == -1} {
+	set i $currentselection
+    }
+    if $oldtkversion {
+	if {$i > $nbfound - $options(listboxheight) / 2} {
+	    .f.main.list.lb.box yview [expr $nbfound - $options(listboxheight)]
+	} else {
+	    .f.main.list.lb.box yview [expr $i - $options(listboxheight) / 2]
+	}
+	.f.main.list.lb.box select clear
+	.f.main.list.lb.box select to $i
+    } else {
+	.f.main.list.lb.box see $i
+	.f.main.list.lb.box selection clear 0 end
+	.f.main.list.lb.box selection set $i
+    }
+    set currentselection $i
+}
+    
+
+#----------------------------------------------------
+# Show complete Address
+#----------------------------------------------------
+
+proc showAdr nr {
+    global adrbook nbfields found mes maxindex
+    global currentindex currentselection
+
+    clearAction
+    set currentselection $nr
+    set currentindex [lindex $found $nr]
+    if [info exists adrbook($currentindex)] {
+	set line $adrbook($currentindex)
+	for {set i 0} {$i < $nbfields} {incr i} {
+	    .f.main.entry.$i.entry insert 0 [lindex $line $i]
+    	}
+	.f.main.list.status.2 configure -text [format $mes(recordof) [expr $currentindex + 1] [expr $maxindex + 1]]
+    }
+}
+
+
+#----------------------------------------------------
+# Search for Address
+#----------------------------------------------------
+
+proc searchAdr {} {
+    global adrbook maxindex found nbfound mes nbfields fields searchtype
+    global selected view
+
+    set searchlist {}
+    # Load fields for what to search
+    for {set j 0} {$j < $nbfields} {incr j} {
+        set eintrag($j) [.f.main.entry.$j.entry get]
+	if {$eintrag($j) != ""} {
+	    lappend searchlist $j
+	}
+    }
+    switch -exact $searchtype {
+        "exact" { # exact search
+	    for {set i 0} {$i <= $maxindex} {incr i} {
+		set ende 1
+	        foreach j $searchlist {
+		    if {[string compare $eintrag($j) [lindex $adrbook($i) $j]] != 0} {
+	    		set ende 0 ; break } 
+		}
+		set selected($i) $ende
+	    }
+	}
+        "match" { # matching search
+	    for {set i 0} {$i <= $maxindex} {incr i} {
+		set ende 1
+	        foreach j $searchlist {
+		    if {![string match $eintrag($j) [lindex $adrbook($i) $j]]} {
+	    		set ende 0 ; break } 
+		}
+		set selected($i) $ende
+	    }
+	}
+        "regexp" { # regexpr search
+	    for {set i 0} {$i <= $maxindex} {incr i} {
+		set ende 1
+	        foreach j $searchlist {
+		    if {![regexp $eintrag($j) [lindex $adrbook($i) $j]]} {
+	    		set ende 0 ; break } 
+		}
+		set selected($i) $ende
+	    }
+	}
+        "regexpnocase" { # regexpr search no case
+	    for {set i 0} {$i <= $maxindex} {incr i} {
+		set ende 1
+	        foreach j $searchlist {
+		    if {![regexp -nocase $eintrag($j) [lindex $adrbook($i) $j]]} {
+	    		set ende 0 ; break } 
+		}
+		set selected($i) $ende
+	    }
+	}
+    }
+
+    set view 0
+    loadlistbox
+
+    .f.main.list.status.0 configure -text $mes(aftersearch)
+    .f.main.list.status.1 configure -text [format $mes(found) $nbfound]
+
+    if {$nbfound > 0} { 
+ 	showAdr 0
+	setSelection 0
+    }
+}
+
+
+#----------------------------------------------------
+# LoadListbox
+#----------------------------------------------------
+
+proc loadlistbox {} {
+    global adrbook maxindex found nbfound fields mes selected view
+
+    set found {}
+    # Listbox wieder laden
+    .f.main.list.lb.box delete 0 end
+    for {set i 0} {$i <= $maxindex} {incr i} {
+	if $selected($i) {
+	    set a1 [lindex $adrbook($i) $fields(listboxentry1)]
+	    set a2 [lindex $adrbook($i) $fields(listboxentry2)]
+	    if {$a2 != ""} {
+		.f.main.list.lb.box insert end [format "* $fields(listboxformat)" $a1 $a2]
+	    } else {
+		.f.main.list.lb.box insert end [format "* %s" $a1]
+	    }
+	    lappend found $i
+	} elseif $view {
+	    set a1 [lindex $adrbook($i) $fields(listboxentry1)]
+	    set a2 [lindex $adrbook($i) $fields(listboxentry2)]
+	    if {$a2 != ""} {
+		.f.main.list.lb.box insert end [format "  $fields(listboxformat)" $a1 $a2]
+	    } else {
+		.f.main.list.lb.box insert end [format "  %s" $a1]
+	    }
+	    lappend found $i
+	}
+    }
+    set nbfound [llength $found]
+    .f.main.list.status.1 configure -text [format $mes(records) [expr $maxindex + 1]]
+
+}
+
+ 
+#----------------------------------------------------
+# toggleview all / only selected
+#----------------------------------------------------
+
+proc toggleview {} {
+    global mes view
+
+    set view [expr !$view]
+    loadlistbox
+    .f.main.list.status.0 configure -text $mes(view$view)
+    showAdr 0 
+    setSelection 0
+}
+
+
+#----------------------------------------------------
+# toggleselect
+#----------------------------------------------------
+
+proc toggleselect {} {
+    global selected found adrbook fields
+    global nbfound nbfields currentselection currentindex
+
+# catch {set i [.f.main.list.lb.box curselection]} j
+#    puts "$i $j $currentselection $currentindex"
+#breakpoint
+    puts "$currentselection $currentindex"
+    set i $currentselection
+    if {$i != ""} {
+	set nr [lindex $found $i]
+	set selected($nr) [expr !$selected($nr)]
+	.f.main.list.lb.box delete $i $i
+	if $selected($nr) {
+	    .f.main.list.lb.box insert $i [format "* $fields(listboxformat)" [lindex $adrbook($nr) $fields(listboxentry1)] [lindex $adrbook($nr) $fields(listboxentry2)]]  
+	} else {
+	    .f.main.list.lb.box insert $i [format "  $fields(listboxformat)" [lindex $adrbook($nr) $fields(listboxentry1)] [lindex $adrbook($nr) $fields(listboxentry2)]]  
+	}
+	setSelection $i
+    }
+}
+
+
+#----------------------------------------------------
+# Move Button (absolute)
+#----------------------------------------------------
+
+proc moveabsAdr {i} {
+    global nbfound nbfields
+
+    if {$i >= $nbfound} { set i [expr $nbfound - 1] } 
+    if {$i < 0}         { set i [expr $nbfound - 1] }
+    showAdr $i 
+    setSelection $i
+    .f.main.list.status.4.e delete 0 end
+}
+
+
+#----------------------------------------------------
+# Move Button (relative)
+#----------------------------------------------------
+
+proc moverelAdr {offset} {
+    global nbfound nbfields currentselection
+
+    set i [expr $currentselection + $offset]
+    if {$i >= $nbfound} { set i [expr $nbfound - 1] }
+    if {$i < 0}         { set i 0 }
+    showAdr $i 
+    setSelection $i
+    .f.main.list.status.4.e delete 0 end
+}
+
+
+#----------------------------------------------------
+# ABC Buttons
+#----------------------------------------------------
+
+proc abcAdr {ch presstime} {
+    global adrbook found nbfound fields lastpressed searchfor options
+
+    set a 0
+    set b [expr $nbfound - 1]
+    set sort1 $fields(sort1)
+    if {$presstime == 0} {
+	.f.main.list.status.4.e insert end [string tolower $ch]
+    } elseif {$presstime - $lastpressed > $options(pressdelay)} {
+    # if too much time elaped since last press begin search
+	.f.main.list.status.4.e delete 0 end
+	.f.main.list.status.4.e insert 0 [format "%c" [expr $ch + 97]]
+    } else {
+	.f.main.list.status.4.e insert end [format "%c" [expr $ch + 97]]
+    }
+    set searchfor [.f.main.list.status.4.e get]
+    set lastpressed $presstime
+    # Binary Search until a + 1 = b
+    while {$b - $a > 1} {
+    	set c [expr ($a+$b) / 2]
+        if {[string compare [string tolower [lindex $adrbook([lindex $found $c]) $sort1]] $searchfor] < 0} {
+	    set a $c
+	} else {
+	    set b $c
+	}
+    }
+    # Choose a or b
+    if {[string compare [string tolower [lindex $adrbook([lindex $found $a]) $sort1]] $searchfor] < 0} {
+    	showAdr $b
+	setSelection $b
+    } else {
+    	showAdr $a
+	setSelection $a
+    }
+    focus .f.main.list.status.4.e
+}
+
+
+
+#----------------------------------------------------
+# Prepare Number for dialing
+#----------------------------------------------------
+
+proc prepare_number {num coun} {
+    global options countries
+
+    set tel ""
+    # Delete anything after a letter
+    regsub "\[A-Za-z\].*" $num "" num
+    # Delete all nonnumbers ()/- 
+    regsub -all "\[ ()/+\-\]" $num "" num
+    if {![info exists countries($coun,fullname)]} {
+	set coun $options(mycountry)
+    }
+    if {$coun != $options(mycountry)} {
+        # international call
+	set tel $options(dialoutdistance)
+	append tel $countries($options(mycountry),intl_dialout)
+	if {[string first $countries($coun,intl_prefix) $num] != 0} {
+	    append tel $countries($coun,intl_prefix)
+	    if {[string first $countries($coun,intl_leaveout) $num] == 0} {
+		regsub $countries($coun,intl_leaveout) $num "" num
+	    }
+	}
+	append tel $num
+    } else {
+	if {[string first $countries($coun,intl_prefix) $num] == 0} {
+	    regsub $countries($coun,intl_prefix) $num $countries($coun,intl_leaveout) num
+	}
+	if {[string first $options(myareacode) $num] == 0} {
+	    # local call
+	    set tel $options(dialoutlocal)
+	    regsub $options(myareacode) $num "" num
+	    append tel $num
+	} else {
+	    # national call
+	    set tel $options(dialoutdistance)
+	    append tel $num
+	}
+    }
+    return $tel
+}
+
+
+#----------------------------------------------------
+# Phone Fax Email or Mail Button - call apropriate programm
+#----------------------------------------------------
+
+proc do_callprog thisone {
+    global adrbook currentindex fields options only_stdout oldtkversion res mes
+
+    set num [lindex $adrbook($currentindex) $fields($thisone)]
+    if {$num == {}} {
+	puts stderr "Empty field, cannot call programm."
+    } else {
+	foreach i {H W P S O C M} {
+	    regsub \\($i\\) $num "($mes($i))" num
+	}
+	if {[string first "," $num] != -1} {
+	    # Several entries to choose from
+            set line [split $num ","]
+	    set num [llength $line]
+	    set w .choose
+
+	    catch {destroy $w}
+	    toplevel $w -class Dialog
+	    wm transient $w [winfo toplevel [winfo parent $w]]
+	    frame $w.top -relief raised -bd 1
+	    pack $w.top -side top -fill both
+	    frame $w.bot -relief raised -bd 1
+	    pack $w.bot -side bottom -fill both
+	    if $oldtkversion {
+		label $w.msg -text $mes(chooseentry) \
+		    -font "$options(titlefont)"
+	    } else {
+		label $w.msg -wraplength 3i -justify left -text $mes(chooseentry) \
+		    -font "$options(titlefont)"
+	    }
+	    pack $w.msg -in $w.top -side right -expand 1 -fill both -padx 3m -pady 3m
+	    set i 0
+	    foreach l $line {
+		button $w.$l -text $l -command "set res $i"
+		pack $w.$l -in $w.bot -side top -expand 1 -padx 3m -pady 2m
+		incr i
+	    }
+	    wm withdraw $w
+	    update idletasks
+	    set x [expr [winfo screenwidth $w]/2 - [winfo reqwidth $w]/2 \
+		    - [winfo vrootx [winfo parent $w]]]
+	    set y [expr [winfo screenheight $w]/2 - [winfo reqheight $w]/2 \
+		    - [winfo vrooty [winfo parent $w]]]
+	    wm geom $w +$x+$y
+	    wm deiconify $w
+	    set oldFocus [focus]
+	    grab $w
+	    tkwait visibility $w
+	    focus $w
+	    tkwait variable res
+	    catch {focus $oldFocus}
+	    destroy $w
+	    set num [lindex $line $res]
+  	}
+	if {([string first "fax" $thisone] == 0) ||
+	    ([string first "phone" $thisone] == 0)} {
+	    set num [prepare_number $num  \
+		    [lindex $adrbook($currentindex) $fields(country)]]
+	}
+	if {$only_stdout} {
+	    puts stdout $num
+	    if !$oldtkversion {
+		.f.main.entry.$fields($thisone).entry selection range 0 end
+	    }
+	} else {
+    	    regsub -all %number $options(callprog,$thisone) $num callprog
+	    set callprog [linsert $callprog 0 exec]
+	    puts stdout $callprog
+	    eval $callprog
+	}
+    }
+}
+
+
+
+#----------------------------------------------------
+# Mail Button - give a mailadress to stdout or print an enveloppe
+#----------------------------------------------------
+
+proc do_mail {} {
+    global adrbook currentindex options
+
+    set printline $options(mailbutton_format)
+    if {$options(texconvert)} {
+	puts [formatline $adrbook($currentindex) $printline "\n" tex none]
+    } else {
+	puts [formatline $adrbook($currentindex) $printline "\n" none none]
+    }
+}
+  
+#----------------------------------------------------
+# help
+#
+# Thanks to Adam <apj@twain.oit.umass.edu> who contributed
+# this procedure which is a lot nicer than the old one.
+#----------------------------------------------------
+
+proc Help {topic {x 0} {y 0}} {
+    global helpTopics helpCmds mes options
+
+    if {$topic == ""} return
+    while {[info exists helpCmds($topic)]} {
+        set topic [eval $helpCmds($topic)]
+    }
+    if [info exists helpTopics($topic)] {
+        set msg $helpTopics($topic)
+    } else {
+        set msg $mes(nohelp)
+    }
+    toplevel .helpwin
+    wm title .helpwin "Addressbook Help"
+    frame .helpwin.frame -borderwidth 2 -relief raised
+    frame .helpwin.frame.l -borderwidth 2
+    frame .helpwin.frame.d -borderwidth 2
+    pack .helpwin.frame .helpwin.frame.l .helpwin.frame.d -side top \
+            -fill both -expand true
+    text .helpwin.frame.l.t -width 80 -height 30 -relief sunken \
+            -font "$options(fixedfont)" -wrap word \
+            -yscrollcommand ".helpwin.frame.l.scroll set"
+    pack .helpwin.frame.l.t -side left -fill both -expand true
+    scrollbar .helpwin.frame.l.scroll -command ".helpwin.frame.l.t yview" \
+            -relief sunken
+    pack .helpwin.frame.l.scroll -side left -fill y -expand true
+    button .helpwin.frame.d.dismiss -text $mes(close)  \
+            -command { destroy .helpwin }
+    pack .helpwin.frame.d.dismiss -side top -fill x -expand true \
+            -padx 8 -pady 4 
+
+    .helpwin.frame.l.t insert 1.0 "$mes(infoon) $topic:\n\n$msg"
+    # disable editing
+    .helpwin.frame.l.t configure -state disabled 
+    # move point to beginning
+    .helpwin.frame.l.t yview -pickplace 1.0      
+}
+
+#----------------------------------------------------
+# 
+#----------------------------------------------------
+
+proc getMenuTopic {w x y} {
+    return $w.[$w index @[expr $y-[winfo rooty $w]]]
+}
+
+proc showtext {what} {
+    global options mes
+
+    if [catch {toplevel .showtext}] {
+	raise .showtext
+    } else {
+	wm title .showtext $what
+	frame .showtext.frame -borderwidth 2 -relief raised
+	frame .showtext.frame.l -borderwidth 2
+	frame .showtext.frame.d -borderwidth 2
+	pack .showtext.frame .showtext.frame.l .showtext.frame.d -side top \
+		-fill both -expand true
+	text .showtext.frame.l.t -width 80 -height 30 -relief sunken \
+		-font "$options(fixedfont)" -wrap word \
+		-yscrollcommand ".showtext.frame.l.scroll set"
+	pack .showtext.frame.l.t -side left -fill both -expand true
+	scrollbar .showtext.frame.l.scroll \
+		-command ".showtext.frame.l.t yview" -relief sunken
+	pack .showtext.frame.l.scroll -side left -fill y -expand true
+	button .showtext.frame.d.dismiss -text $mes(close)  \
+		-command { destroy .showtext }
+	pack .showtext.frame.d.dismiss -side top -fill x -expand true \
+		-padx 8 -pady 4 
+
+	.showtext.frame.l.t insert 1.0 [exec cat [glob $options(libdir)/$what]]
+	# disable editing
+	.showtext.frame.l.t configure -state disabled 
+	# move point to beginning
+	.showtext.frame.l.t yview -pickplace 1.0      
+    }
+}
+
+
+#----------------------------------------------------
+# main - Call all the routines
+#----------------------------------------------------
+
+proc main {} {
+    global options mes adrfile nbfields select_result
+
+    if {$options(adrfile) == ""} {
+	set adrfile $options(adrfile1)
+    } else {
+	set adrfile $options(adrfile)
+    }
+
+    createbasicfrontend
+
+    set select_result $adrfile
+    doloadAction
+}
+
+#----------------------------------------------------
+# call main
+#----------------------------------------------------
+
+main
+
+

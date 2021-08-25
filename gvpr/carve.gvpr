@@ -1,0 +1,9 @@
+// This little gvpr script will carve off nodes and edges that aren't marked with the attribute "marked=yes"
+
+N [ marked != "yes" ] { delete( $G, $ ) }
+E [ marked != "yes" ] { delete( $G, $ ) }
+
+N [ marked == "yes" ] { marked = "" }
+E [ marked == "yes" ] { marked = "" }
+
+END_G { $O = $G }

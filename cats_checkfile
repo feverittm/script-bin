@@ -1,0 +1,37 @@
+#!/usr/bin/ksh
+#
+#  a very quick hack that I think will give Floyd what he needs
+
+. /net/hpesctr/mnt/trdb3/cats/cats_startup
+
+if [ $# != 1 ]
+then
+  echo "Format :: $0 <gds_file>"
+  exit
+fi
+
+gdsfile=$1
+
+if [ ! -f ${gdsfile} ]
+then
+   echo "Cannot find gds file: ${gdsfile}"
+else
+   hit=`echo $gdsfile | grep "/" | wc -l`
+   if [ $hit -eq 0 ]
+   then
+      TED=`pwd`
+   fi
+fi
+echo $0: Processing: ${gdsfile}
+unset DISPLAY 
+CATS << NO_MORE_PLEASE > /dev/null
+  input ${gdsfile}
+  root
+! or maybe we need to have another arg for struct $3, instead of root
+  recordfile ${gdsfile}.txt
+  checkfile
+  exit
+NO_MORE_PLEASE
+
+echo "Now you can process $1.txt however you want"
+

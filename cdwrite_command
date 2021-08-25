@@ -1,0 +1,31 @@
+# See cdrecord man page...
+#
+#   cdrecord --scanbus  .... My Linux bus cdrw drive is on 4,0,0
+#	4,0,0	400) 'HL-DT-ST' 'RW/DVD GCC-4481B' '1.13' Removable CD-ROM
+#   cdrecord -dev 4,0,0 -checkdrive
+#	Device type    : Removable CD-ROM
+#	Version        : 0
+#	Response Format: 2
+#	Capabilities   : 
+#	Vendor_info    : 'HL-DT-ST'
+#	Identifikation : 'RW/DVD GCC-4481B'
+#	Revision       : '1.13'
+#	Device seems to be: Generic mmc2 DVD-ROM.
+#	Using generic SCSI-3/mmc   CD-R/CD-RW driver (mmc_cdr).
+#	Driver flags   : MMC-2 SWABAUDIO BURNFREE 
+#	Supported modes: TAO PACKET SAO SAO/R96P SAO/R96R RAW/R16 RAW/R96P RAW/R96R
+#	scsidev: '4,0,0'
+#	scsibus: 4 target: 0 lun: 0
+#	Linux sg driver version: 3.1.25
+
+#linux: (lxcvifem)
+#  CDRECORD=/usr/bin/cdrecord
+#hpux: (hpcvifm)
+#  CDRECORD="/disc/home/red/cprog/cdrtools-2.00.3/cdrecord/OBJ/9000-785-hp-ux-cc/cdrecord"
+#
+#Burn an iso image...
+#$CDRECORD -eject dev=0,0,0 speed=16 $1
+
+# Create a cd from a directory master...
+#mkisofs -R /master/tree | cdrecord -v fs=6m speed=2 dev=4,0,0 -
+

@@ -1,0 +1,267 @@
+###############################################################################
+#
+# File:         make_cell_gif
+# RCS:          $Header:$
+# Description:  Create a gif image of a cell's artwork/schematic/symbol
+# Author:       Floyd Moore
+# Created:	Wed Jan 14 09:35:36 MST 1998
+# Modified:     
+# Language:     Indented Text
+# Package:      N/A
+# Status:       Experimental (Do Not Distribute)
+#
+# (C) Copyright 1998, Hewlett-Packard ESL, all rights reserved.
+#
+###############################################################################
+
+program=`basename $0`
+usage()
+{
+   echo "*************** Piglet to GIF image Converter  ***************"
+   echo
+   echo "Usage: $0 {options...} <blockname>"
+   echo $version_string
+   echo
+   echo "Rep Selection Options:"
+   echo "  The rep is selected from the piglet like suffix added to the"
+   echo "  block name (ie for a view of an inv1_1, use inv1_1V)."
+   echo
+   echo "Control Options:"
+   echo "    -s XxY     : Set conversion size (default is 300x300)."
+   echo "    -o <file>  : Set the output file (default is <rep>.gif)."
+   echo "    -r <res>   : Set pcx file resolution (default is 150dpi)."
+   echo "    -g <hpgl>  : Use hpgl directly from file."
+   echo "    -x         : Turn on debugging information."
+   echo "    -V         : Turn on vshow information."
+   echo "    -v         : Turn on verbose information."
+   echo
+   exit 1
+}
+
+clean_exit()
+{
+   echo "Recieved Signal, cleaning up"
+   rm -f /tmp/*$$*
+   rm -f /tmp/palin.pig
+   exit 1
+}
+
+#
+# Parse Options
+#
+block=""
+size="800x800"
+res=150
+verbose=0
+
+if [ $# -eq 0 ] 
+then
+   usage
+   exit 1
+fi
+
+for opt in $*
+do
+	case $1 in
+	  -x) debug="set -x";    shift;;
+	  -v) verbose=1;         shift;;
+	  -s) shift; size=$1;    shift;;
+	  -r) shift; res=$1;     shift;;
+	  -g) shift; hpgl=$1;    shift;;
+	  --) shift; break;;
+	  -*) echo "ERROR: Bad Command line option: $1";usage; shift;;
+	esac
+done
+
+if [ $res -lt 0 -o $res -gt 300 ]
+then
+   echo "Invalid resolution: must be between 0 and 300dpi"
+   exit -1
+fi
+
+
+if [ ! -z "$hpgl" ]
+then
+   echo "Convert from HPGL file: $hpgl..."
+   if [ ! -f $hpgl ]
+   then
+      echo "HPGL file '$hpgl' does not exist!"
+      exit -1
+   fi
+fi
+
+raw=$1
+l1=`expr length $raw`
+l2=`expr $l1 - 1`
+suffix="`expr substr $raw $l1 1`"
+block="`expr substr $raw 1 $l2`"
+
+xsize=`echo $size | awk '{print substr($1,0,index($1,"x")-1)}' -`
+ysize=`echo $size | awk '{print substr($1,index($1,"x")+1,5)}' -`
+#echo "xsize=${xsize}mm, ysize=${ysize}mm"
+
+#
+# Check is required piglet.db exists
+#
+case "$suffix" in
+   D) start="sch"; show="vshow";;
+   V) start="sch"; show="vshow";;
+   A) start="art"; show="dshow";;
+   E) start="art"; show="show #a";;
+   X) start="art"; show="show #a";;
+   F) start="art"; show="sho -a #a30 #a80 #a107 #a4 #a23"; suffix="A";;
+   *) echo "ERROR: No Suffix given in blockname";usage; exit -1;;
+   esac
+
+#
+# Check if block exists
+#
+blockpath=`get_dir $block`
+if [ -z "$blockpath" ]
+then
+   echo "Bad blockname: $block"
+   exit -1
+fi
+
+##########################################
+#     Parse Arguements from command line #
+##########################################
+
+trap "clean_exit" QUIT
+trap "clean_exit" HUP
+trap "clean_exit" TERM
+trap "clean_exit" INT
+
+counter=1
+
+##
+## Running Banner....
+##
+echo "$0 $block: "
+
+############################################
+#  Create the piglet plot file
+############################################
+
+if [ -z "$hpgl" ]
+then
+   if [ $verbose -eq 1 ]
+   then
+      echo "Plotting piglet device to file"
+   fi
+   
+   SB_OUTDEV=""
+   logfile="/tmp/pigplot_log.$$"
+   PIGDIR=$CBROOT/$ICPROCESS/piglet
+   PIG_ENV=$PIGDIR/artrc
+   export PIG_ENV SB_OUTDEV
+   plotter="7590"
+
+   SB_OUTDEV=""
+   PIG_ENV=$PIGDIR/${start}rc
+   plot_file=/tmp/p${counter}p.$$
+   export PIG_ENV SB_OUTDEV
+
+   piglet >$logfile 2>&1 << %%
+edit ${block}${suffix};
+${show};
+win :n99;
+plot -z -c p=${plotter} ${plot_file}
+exi;
+bye;
+%%
+
+   status=$?
+   if [ $status -ne 0 ]
+   then
+      echo "Piglet plot command failed"
+      clean_exit
+   else
+      #rm -f $logfile
+      echo
+      mv ${plot_file}_P ${block}.hpgl
+   fi
+fi
+
+############################################
+#  Convert the plot file to a gif image
+############################################
+
+plot_file=${plot_file}_P
+
+if [ $verbose -eq 1 ]
+then
+   if [ -z $hpgl ]
+   then
+      echo "converting ${block}.hpgl ..."
+   fi
+fi
+
+#hp2xx -q --truesize -c 12347560 -d 100 -m pcx ${plot_file}
+#hp2xx -q -t off -c 12347560 -d 100 -m pcx ${plot_file}
+if [ -z "$hpgl" ]
+then
+   hp2xx -q -h $ysize -w $xsize -c 12347560 -d $res -m pcx ${block}.hpgl
+   status=$?
+   if [ $status -ne 0 ]
+   then
+      echo "hp2xx conversion command failed: hpgl->pcx"
+      clean_exit
+   fi
+   mv ${block}.hpgl.pcx ${block}.pcx
+else
+   hp2xx -q -h $ysize -w $xsize -c 12347560 -d $res -m pcx $hpgl
+   status=$?
+   if [ $status -ne 0 ]
+   then
+      echo "hp2xx conversion command failed: hpgl->pcx"
+      clean_exit
+   fi
+   mv ${hpgl}.pcx ${block}.pcx
+fi
+
+convert -pen grey -opague white ${block}.pcx ${block}.gif
+status=$?
+if [ $status -ne 0 ]
+then
+   echo "Imagemagic 'convert' conversion command failed: pcx->gif #1"
+   clean_exit
+fi
+convert -pen white -opague black ${block}.gif /tmp/tmp.gif
+status=$?
+if [ $status -ne 0 ]
+then
+   echo "Imagemagic 'convert' conversion command failed: pcx->gif #2"
+   clean_exit
+fi
+mv /tmp/tmp.gif ${block}.gif
+convert -pen black -opague grey ${block}.gif /tmp/tmp.gif
+status=$?
+if [ $status -ne 0 ]
+then
+   echo "Imagemagic 'convert' conversion command failed: pcx->gif #3"
+   clean_exit
+fi
+mv /tmp/tmp.gif ${plot_file}.gif
+convert -pen SkyBlue -opague blue ${block}.gif /tmp/tmp.gif
+status=$?
+if [ $status -ne 0 ]
+then
+   echo "Imagemagic 'convert' conversion command failed: pcx->gif #4"
+   clean_exit
+fi
+mv /tmp/tmp.gif ${block}.gif
+
+rm -f ${block}.pcx
+
+############################################
+#  Move the plot file to the destination
+############################################
+
+if [ $verbose -eq 1 ]
+then 
+   echo "Output file written to ${block}.gif"
+fi
+echo "Successful"
+
+exit 0

@@ -1,0 +1,37 @@
+#!/usr/bin/ksh
+# Floyd Moore <floyd.moore@hp.com>
+
+verbose=false
+trace=false
+case "$-" in
+*x*) trace=true ;;
+*v*) verbose=true ;;
+esac
+
+if [ $(id -u) -eq 0 ]
+then
+   return
+fi
+
+pids=`ps -ef | grep ssh-agent | egrep -v "grep"`
+
+if [ $(echo $pids | wc -l) -gt 1 ]
+then
+   echo "More than one ssh-agent process found!"
+   for pid in $pids
+   do
+      ps -ef | grep $pid | egrep -v "grep"
+   done
+   exit 1
+elif [ $(echo $pids | wc -l) -eq 1 ]
+then
+   echo "No ssh-agent process..."
+   case "$(uname -n)" in
+      hpcvifm)
+         /usr/bin/keychain ~/.ssh/id_rsa
+      ;;
+   esac
+fi
+alias resetssh=". ~/.keychain/`uname -n`-sh"
+. ~/.keychain/`uname -n`-sh > /dev/null
+

@@ -1,0 +1,34 @@
+#!/bin/ksh
+export PRINTER=6ur11lj5
+export PLOTTER=n10djc
+block="mako_core2"
+#bplot -a"-A#A30#A80" -m -y ${block}A
+#bplot -C -a"-A#A30#A80" ${block}A
+#bplot -h1 -f -a"-a#r30#r80#l12#l13#l15#l16#l17#l18#l19#l20#l65#l66#l1600#l1601#r12#r13#r15#r16#r17#r18#r19#r20#r65#r66#r1600#r1601" -m -y ${block}A
+#bplot -h1 -f -D -a"-a#a30#a12#a13#a15#a16#a17#a18#a19#a20#a65#a66#a1600#a1601" -y ${block}A
+
+tmp_art=bplot_art$$D
+suffix="A"
+bpath=`get_dir $block`
+
+SB_OUTDEV=""
+PIG_ENV=$CBROOT/$ICPROCESS/piglet/artrc
+export PIG_ENV SB_OUTDEV
+
+#new ${tmp_art};
+#add ${bpath}${suffix} :r90 0 0;
+
+echo "Creating HPGL Plot From Piglet."
+$CBROOT/bin/piglet > pig.out  2>&1 <<- !EOF!
+edit ${bpath}${suffix};
+sho -A#I#A30#A80;
+win :n99;
+plot :z :c x=2 p=7589 /tmp/big_fp_plot;
+exi;
+bye;
+!EOF!
+
+bindir=$ESLROOT/bin/Plot
+penfilter="$bindir/fixhgl.noyellow"
+cat /tmp/big_fp_plot_P | $penfilter | lp -d$PLOTTER -oHPGL2
+

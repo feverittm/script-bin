@@ -1,0 +1,7 @@
+#vncserver :1 -geometry 1280x1024 -cc 3 -blackpixel 0 -whitepixel 1
+#vncserver :1 -geometry 1600x1080 -cc 3 -blackpixel 0 -whitepixel 1
+#vncserver :1 -geometry 1024x768 -blackpixel 0 -whitepixel 1
+#vncserver :1 -geometry 1024x768 -cc 3 -blackpixel 0 -whitepixel 1
+#vncserver :1 -geometry 1800x1150 -cc 3 -blackpixel 0 -whitepixel 1
+vncserver :1 -geometry 1900x1150 -blackpixel 0 -whitepixel 1
+

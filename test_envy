@@ -1,0 +1,29 @@
+export PATH=$PATH:/sdg/bin
+
+# default
+MODE=2006.1
+MODE=default
+
+echo "Arch is `uname -s`"
+
+case $MODE in
+2006.1)
+   # icf2006.1
+   export MENTOR_REL=icf2006.1p
+   export AMS_REL=ams2006.1p
+   eval $(envy /home/red/bin/mentor.setup cd40l)
+   ;;
+
+*)
+   echo "Setting up default mode"
+   unset MENTOR_REL
+   unset AMS_REL
+   eval $(envy /home/red/bin/mentor.setup cd40l)
+   ;;
+esac
+
+echo $MGC_AMS_HOME
+echo $anacad
+
+return
+

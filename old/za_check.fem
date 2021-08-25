@@ -1,0 +1,578 @@
+#!/usr/local/bin/perl5 -w
+#
+#       Author:  Floyd Moore (redfc.hp.com)
+#	$Header: /piranha/fmlxd1a/xdb1aax/xx/bin/za_check 1.5 1999-12-15 14:28:03-07 red Exp $
+#	Description:
+#          Check an artwork design for zero area devices (such as polygons,
+#          and rectangles).  These devices can cause confusion at the 
+#          Mask fab.
+#
+#	"za_check" created by red
+#
+#	$Log: za_check,v $
+#	Revision 1.5  1999-12-15 14:28:03-07  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Added LI to the list of checked layers.
+#
+#	Revision 1.4  1999-12-15 09:57:34-07  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Fixed an error in the return code from the gds check routine.
+#
+#	Revision 1.3  1999-10-01 11:06:23-06  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Updated code to show which cell has the error.
+#
+#	Revision 1.2  1999/04/09 21:41:50  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Zero Area checker
+#
+#	Revision 1.8  1997/12/03 00:35:46  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Modified the checker to only report failures on real artwork layers.
+#	Modified the method checker to fail if a specific method requested does not
+#	have the approopriate files available.
+#
+#	Revision 1.6  1997/09/19 20:45:10  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Added a verbose tag to the output to send out the piglet block name
+#	during parsing of the piglet archive.
+#
+#	Revision 1.5  1997/09/10 23:18:45  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Added the poly checks and debuged some other problems.
+#
+#	Revision 1.4  1997/08/27 17:11:49  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Added the check for gds data by default.
+#
+#	Revision 1.3  1997/05/29 20:53:34  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Added trap for either no options on command line or '-help'.
+#	Added ceiling of 255 to the exit code.
+#
+#	Revision 1.2  1997/05/29 19:25:53  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Added ability to check from piglet.db if it exists
+#	Added a check for line structures
+#	Decided not to check polygons since the failure mode is very
+#	obscure.
+#	Need to add check for gds2pig
+#
+#	Revision 1.1  1997/05/29 17:46:22  red
+#	Author: red@hpesfem.fc.hp.com (Floyd Moore)
+#	Initial revision
+#
+
+use strict;
+use subs qw(handler show_usage parse_options suffix checklayer file_mtime);
+use POSIX qw(strftime);
+use vars qw($opt_r $opt_F $opt_v $opt_x $opt_p $opt_t $opt_g $opt_q $opt_V);
+
+my ($Rev, $RunDate, $DirName, $ProgName);
+my $layer;
+
+$RunDate = strftime '%Y/%m/%d %H:%M:%S', localtime;
+$Rev = (split(' ', '$Revision: 29 $', 3))[1];
+$0 =~ m!(.*)/!; $ProgName = $'; $DirName = $1; $DirName = '.' unless $DirName;
+
+$SIG{'HUP'} =   \&handler;
+$SIG{'INT'} =   \&handler;
+$SIG{'QUIT'} =  \&handler;
+$SIG{'TERM'} =  \&handler;
+
+use Getopt::Std;
+
+sub handler
+{
+    my($sig) = @_;
+    warn "$ProgName:INFO: Caught a SIG$sig -- shutting down\n";
+    exit(0);
+}
+
+sub show_usage
+{
+   print "$ProgName  $Rev\t\t$RunDate\n";
+   print "Check the design for zero area structures (rectangles, polygons).\n";
+   print "Note:  Script uses the trantor.db as a source for the piglet\n";
+   print "  archive data using the 'pigout' command.  Therefore a drc is\n";
+   print "  required before this script has been ran.\n";
+   print "\n";
+   print "$ProgName [-x] [-v] [-f] [-p] [-g] [-V] <blockname>\n";
+   print "   Options:\n";
+   print "   -V :  Report version number and quit\n";
+   print "   -q	:  Quiet mode.  Suppress all messages, just give error code\n";
+   print "   -x :  Print lines from archive as script runs\n";
+   print "   -f :  Try to fix the easy problems automatically (implies '-p')\n";
+   print "   -r :  Skip the polygon checks\n";
+   print "   -v :  Print the version of the script at startup\n";
+   print "   -F :  (use along with -g) Set gds file name other that gds.hier\n";
+   print "   Source selection order:\n";
+   print "   -g :  Check the gds.hier instead (default if gds.hier exists).\n";
+   print "   -t :  Use the arwork trantor.db instead of gds.hier\n";
+   print "   -p :  Use the artwork piglet.arc instead if it exists\n";
+   print "\n";
+   exit 0;
+}
+
+# my options parser
+sub parse_options
+{
+   if ( $#ARGV < 0) {
+      &show_usage();
+      exit(1);
+   } elsif ( $ARGV[0] =~ "-help"){
+      &show_usage();
+      exit(1);
+   }
+
+   unless (&Getopt::Std::getopts('VF:gpqrtvx')) {
+      &show_usage();
+      exit(1);
+   }
+   if ($opt_V) { die "$ProgName $Rev\n"; };
+
+   if (defined($opt_F) && !defined($opt_g)){
+      print "Setting gds mode to read from file: $opt_F\n";
+      $opt_g=1;
+      }
+   if (($opt_p && $opt_g) || ($opt_p && $opt_t) || ($opt_t && $opt_g)){
+       die "Only one of '-t', '-p' or '-g' options can be specified\n";
+   }
+   if ($opt_r){
+      unless($opt_q){
+         print "Skipping Polygon checks!\n";
+      }
+   }
+}
+
+sub get_dir	# Fast get_dir
+{
+    my($B) = @_;
+    return (map {"$_/$B"} grep { -d "$_/$B" } split(/:/,$ENV{'BLOCKPATH'}))[0];
+}
+
+sub suffix
+{
+    if ($_[0] == 1)    { return "1st"; }
+	elsif ($_[0] == 2) { return "2nd"; }
+    elsif ($_[0] == 3) { return "3rd"; }
+	else { return $_[0] . "th"; }
+}
+
+sub checklayer
+{
+    if ($layer == 1)    { return 0; };
+    if ($layer == 4)    { return 0; };
+    if ($layer == 8)    { return 0; }; # cont1
+    if ($layer == 9)    { return 0; }; # metal1
+    if ($layer == 10)   { return 0; }; # cont2
+    if ($layer == 11)   { return 0; }; # metal2
+    if ($layer == 12)   { return 0; }; # cont3
+    if ($layer == 13)   { return 0; }; # metal3
+    if ($layer == 15)   { return 0; }; # cont4
+    if ($layer == 16)   { return 0; }; # metal4
+    if ($layer == 17)   { return 0; }; # cont5
+    if ($layer == 18)   { return 0; }; # metal5
+    if ($layer == 19)   { return 0; }; # cont6
+    if ($layer == 20)   { return 0; }; # metal6
+    if ($layer == 21)   { return 0; }; #
+    if ($layer == 22)   { return 0; };
+    if ($layer == 23)   { return 0; };
+    if ($layer == 24)   { return 0; };
+    if ($layer == 30)   { return 0; };
+    if ($layer == 1209) { return 0; }; # limetal
+    return 1;
+}
+
+sub file_mtime {
+    my $filename = shift;
+    # (stat("file"))[9] returns mtime of file.
+    return (stat($filename))[9];
+}
+
+
+######################################
+#  Main Program  #####################
+######################################
+
+# Global variables
+my ($icp, $blk, $za_found, $editname);
+my ($drcrep,$artrep, $trantor, $archive, $new_archive, $line);
+my ($gds_valid, $trantor_valid, $piglet_valid);
+my ($mapfile, $pigdb, $gdsrep, $gdsfile);
+my $tellme;
+my @err;
+my ($c0,$c1);
+my ($x0,$y0);
+my ($x1,$y1);
+my ($check_block, $width);
+
+parse_options;
+unless ($opt_q) { print "# $ProgName  $Rev\t\t$RunDate\n\n"; }
+
+unless(defined($opt_F)){
+   $blk = &get_dir($ARGV[0]);		# be replaced by your code...
+   if (length($blk) == 0) {
+       print "Cannot locate block: $ARGV[0]\n";
+       &show_usage();
+       exit(1);
+   }
+
+   # define some global variables...
+
+   $icp = $ENV{ICPROCESS};
+   $gdsrep = $blk . "/cmdrc_" . $icp;
+   $gdsfile = $gdsrep . "/gds.hier";
+   $artrep = $blk . "/art_" . $icp;
+   $drcrep = $blk . "/drc_" . $icp;
+
+   # check if artwork for block exists...
+   if ( ! -d "$artrep" ) {
+      die "No artwork found for block $blk\n";
+   }
+
+   # check if artwork for block exists...
+   if ( ! -d "$artrep" ) {
+      die "No artwork found for block $blk\n";
+   }
+
+} else {
+   $gdsfile=$opt_F;
+   $blk="/tmp/dummy_block0";
+   $artrep = $blk . "/art_" . $icp;
+}
+
+$archive=$artrep . "/piglet.arc";
+$pigdb=$artrep . "/piglet.db";
+$trantor=$artrep . "/trantor.db";
+$za_found=0;
+undef ($tellme);
+
+# check for which rep to check...
+if ( $opt_g || -f $gdsfile ){
+   open (FILE, "$gdsfile") || die "Cannot open GDS file: $gdsfile\n";
+   close(FILE);
+   $gds_valid=1;
+}
+if ( $opt_t || -f $trantor ){
+   open (FILE, "$trantor") || die "Cannot open trantor.db file: $trantor\n";
+   close(FILE);
+   $trantor_valid=1;
+}
+if ( $opt_p || -f $archive ){
+   open (FILE, "$archive") || die "Cannot open archive file: $archive\n";
+   close(FILE);
+   $piglet_valid=1;
+}
+
+if ( !defined($gds_valid) && !defined($trantor_valid) && !defined($piglet_valid)){
+    die "No valid files exist to check\n";
+}
+
+# Tell the test mode if no type options are specified...
+if (!defined($opt_g) && !defined($opt_p) && !defined($opt_t)){
+    unless($opt_q) {$tellme=1;}
+}
+      
+my ($outfile, $errfile);
+if ( $gds_valid && !defined($opt_p) && !defined($opt_t)) {
+   ($opt_v || $tellme) && print "Using gds check mode\n";
+   unless(defined($opt_F)){
+      if (&file_mtime($pigdb) > &file_mtime($gdsfile)){
+         print "WARNING: gds.hier is out of date\n";
+      }
+      $outfile= $gdsrep . "/readfile.out";
+      $errfile= $gdsrep . "/readfile.err";
+   } else {
+      $errfile= "/tmp/readfile.err";
+      $outfile= "/tmp/readfile.out";
+   }
+   $mapfile="";
+   if ($icp eq "i856"){
+      $mapfile = $ENV{CBROOT} . "/esl/i856/etc/gds2pig.map.p856";
+   } elsif ($icp eq "xx"){
+      $mapfile = $ENV{ESLROOT} . "/xx/etc/gds2pig.map";
+   } else {
+      $mapfile = $ENV{CBROOT} . $icp . "/etc/gds2pig.map";
+   }
+   if ( ! -r "$mapfile"){
+      die "Cannnot read mapfile at: $mapfile\n";
+   }
+   my $cmd = "gds2pig -n -l $mapfile $gdsfile > /dev/null 2>$errfile";
+   $opt_v && print STDERR $cmd, "\n";
+   system($cmd) &&
+      die "Could not exec gds2pig\n";
+   open(FILE,$errfile) ||
+      die "Could not open gds2pig error output file: $errfile.\n";
+   while (<FILE>) {
+      chop;
+      /structure/ && do { 
+	 $err[$za_found-1]->{"structure"}=$_;
+	 next;
+	 };
+      /width/ && do { 
+	 $za_found += 1;
+	 $err[$za_found-1]->{"width"}=$_;
+	 next;
+	 };
+   }
+   unlink $errfile;
+   close(FILE);
+
+   if ($za_found > 0){
+      if (!defined($opt_q)){
+         print "$za_found bad structures found in gds file\n";
+         my $i;
+         my $type;
+         for $i ( 0 .. $#err ) {
+            print "$err[$i]->{'structure'}\n";
+            print "   $err[$i]->{'width'}\n";
+            }
+         }
+      exit $za_found;
+      }
+   open(FILE,"gds2pig -n -l $mapfile $gdsfile 2>/dev/null |") ||
+      die "Could not open pipe to gds2pig output.\n";
+
+
+} 
+if ( $piglet_valid && defined($opt_p)){
+      open(FILE,"$archive") ||
+         die "Cannot open archive: $archive\n";
+      if ($opt_p && (&file_mtime($pigdb) > &file_mtime($archive))){
+         print "WARNING: Piglet Archive is out of date\n";
+      }
+      ($opt_v || $tellme) && print "Using piglet archive check mode\n";
+}
+if ( $trantor_valid && defined($opt_t)){
+       open(FILE,"stream_archive $blk | ") ||
+	  die "Cannot open archive stream from trantor\n";
+       if (&file_mtime($pigdb) > &file_mtime($trantor)){
+          print "WARNING: Trantor.db is out of date\n";
+       }
+       ($opt_v || $tellme) && print "Using trantor check mode\n";
+}
+
+# set record seperator to ';' to match piglet archive format
+$/=";";
+while(<FILE>){
+   s/\$\$.*\n//g;
+   s/\n//g;
+   s/\s+/ /g;
+   $line=$_;
+   $opt_x && print "Line: $line\n";
+   s/^EDIT // && do { 
+      if(defined($opt_v)) { print "Checking $_...\n"; }
+      $check_block=$_;
+   };
+
+############# 
+# rectangle checks
+#
+      s/\s*ADD R(\d+)//i && do {
+	  $layer=$1;
+	  if (&checklayer == 1){ 
+	     next; 
+	     }
+         #print "Line: $_\n";
+         s/;\s*$//;
+         s/\s+/ /;
+         s/^\s*//;
+	 s/^\.\S+\s*//;
+	 s/^\@\S+\s*//;
+         #print "Rectangle: $_\n";
+         ($c0,$c1)=split(/ /,$_);
+         ($x0,$y0)=split(/,/,$c0);
+         ($x1,$y1)=split(/,/,$c1);
+         if ( $x0==$x1 && $y0==$y1){
+	    unless($opt_q){
+               print "$check_block: Point Rectangle found: $line\n";
+	    }
+	    $za_found+=1;
+            next;
+         }
+         elsif ( $x0==$x1 || $y0==$y1){
+            unless ($opt_q){
+               print "$check_block: Zero Area Rectangle: $line\n";
+	    }
+	    $za_found+=1;
+            next;
+         }
+         #print "c0=$c0, c1=$c1\n";
+         next;
+     };
+
+############# 
+# polygon checks
+#
+   s/\s*ADD P(\d+)//i && do {
+       $layer=$1;
+
+       my($work, $poly_found, $sl, $yint, %slope);
+       my($cnt, $ptr, $tmp, %poly_points, $c_x0, $c_y0);
+       my(%segment, $c_x1, $c_y1);
+       if (&checklayer == 1){ 
+	  next; 
+	  }
+       $opt_r && do {    #skip polygon checks
+	  undef $line; 
+	  next; 
+	  };  
+       s/;\s*$//;
+       s/^\s*//;
+       $work=$_;
+       $opt_x && print "Polygon on Layer $layer: $work\n";
+       ($c0,$work)=split(/ /,$work,2);
+       ($x0,$y0)=split(/,/,$c0);
+       $poly_points{$c0}=0;
+       $ptr=1;
+       $poly_found=0;
+       undef(%slope);
+       while (defined $work){
+	 #print "Work Length=" . length($work);
+         ($c1,$work)=split(/ /,$work,2);
+         ($x1,$y1)=split(/,/,$c1);
+ 	 #print "Parse $ptr polygon segment: $x0,$y0 <=> $x1,$y1\n";
+	 $segment{$c1}="$x0:$y0:$x1:$y1";
+
+	 #
+	 # compute the slope and y-intercept of the polygon line segment.
+	 #
+	 if (($x1-$x0) == 0) {
+	    #print "   Vertical line\n";
+	    $sl=99999;
+	    $yint=99999;
+	 } elsif (($y1-$y0)==0){
+	    #print "   Horizontal line\n";
+	    $sl=0;
+	    $yint=$y1;
+	 } else {
+	    $sl=($y1-$y0)/($x1-$x0);
+	    $sl=sprintf("%3.2f",$sl);
+	    $sl=$sl+0.0;
+	    if (!defined($opt_q) && abs($sl) != 1.0){
+	       #print "$check_block: Warning: Polygon has non-45 degree edge segment (slope=$sl): $x0,$y0 to $x1,$y1\n";
+               ++$poly_found;
+	    }
+	    $yint=$y1-$sl*$x1;
+	 }
+	 #
+	 # check if slope and y-intercept match a previous segment from the
+	 #  polygon
+	 $cnt=0;
+	 foreach $tmp (keys %slope){
+	    ++$cnt;
+	    #print "... [$cnt] check $x0,$y0->$x1,$y1 => $slope{$tmp} to $sl,$yint\n";
+	    if ($slope{$tmp} eq "$sl:$yint"){
+	       ($c_x0, $c_y0, $c_x1, $c_y1)=split(/:/,$segment{$tmp}); 
+               {
+	       #print "Match slope: $c_x0,$c_y0->$c_x1,$c_y1 = $slope{$tmp}\n";
+	       if ($slope{$tmp} eq "99999:99999" && $x0 == $c_x0){
+		  #print "Co-linear vertical lines\n";
+		  if(($y0 <= $c_y0 && $y0 >= $c_y1) || 
+		     ($y0 >= $c_y0 && $y0 <= $c_y1)){
+                        unless($opt_q){
+			   print "$check_block: Polygon has Co-incident vertical segment at $c_x0,$c_y0 $c_x1,$c_y1\n";
+                        }
+			++$poly_found;
+			last;
+			}
+		  if(($y1 <= $c_y0 && $y1 >= $c_y1) || 
+		     ($y1 >= $c_y0 && $y1 <= $c_y1)){
+                        unless($opt_q){
+			   print "$check_block: Polygon has Co-incident vertical segment at $c_x0,$c_y0 $c_x1,$c_y1\n";
+                        }
+			++$poly_found;
+			last;
+			}
+	       } elsif($slope{$tmp} ne "99999:99999") {
+		  #print "$check_block has Co-linear lines: Slope-yintercept=$slope{$tmp}, at $tmp\n";
+		  if(($x0 <= $c_x0 && $x0 >= $c_x1) || 
+		     ($x0 >= $c_x0 && $x0 <= $c_x1)){
+                        unless($opt_q){
+                           #print "DEBUG: block=$check_block\n";
+                           #print "DEBUG: coordinates0=$c_x0, $c_y0\n";
+                           #print "DEBUG: coordinates1=$c_x1, $c_y1\n";
+			   print "$check_block: Polygon has Co-incident segment at $c_x0,$c_y0 $c_x1,$c_y1\n";
+                        }
+			++$poly_found;
+			last;
+			}
+		  if(($x1 <= $c_x0 && $x1 >= $c_x1) || 
+		     ($x1 >= $c_x0 && $x1 <= $c_x1)){
+                        unless($opt_q){
+			   print "$check_block: Polygon has Co-incident segment at $c_x0,$c_y0 $c_x1,$c_y1\n";
+                        }
+			++$poly_found;
+			last;
+			}
+               }
+            }
+	    }
+	 }
+	 $slope{$c1}="$sl:$yint";
+         #print "    slope, y-intercept=$slope{$c1}\n";
+
+ 	 #if (defined $work) {print "     Working on: $work\n"; }
+
+         $poly_points{$c0}=$ptr;
+	 $ptr += 1;
+	 $x0=$x1;
+	 $y0=$y1;
+       }
+       if ($poly_found > 0 ){
+          #$za_found += $poly_found;
+          $za_found += 1;
+	  if(!defined($opt_q)) { print "$line\n\n"; }
+	  }
+       undef $line;
+       next;
+  };
+
+  s/\s*ADD L(\d+)//i && do {
+      $layer=$1;
+      if (&checklayer == 1){ 
+         next; 
+      }
+      s/;\s*$//;
+      s/\s+/ /;
+      s/^\s*//;
+
+      #print "Line: $_\n";
+      $width=0;
+      if ( $line !~ ":W" ) {
+         unless ($opt_q){
+            print "$check_block: Line with zero width found: $line\n";
+         }
+	 $za_found+=1;
+	 next;
+      }
+      s/:W(\S*)\s+// && do {
+         $width=$1;
+         if ($width == 0){
+            unless ($opt_q){
+	      print "$check_block: Line with zero width found: $line\n";
+	    }
+	 $za_found+=1;
+	 next;
+         }
+      };
+   };
+}
+
+close(FILE);
+
+if ( $za_found > 0 ) {
+   unless ($opt_q) {
+      print "$za_found bad structures found in design\n";
+      }
+   if ($za_found > 255) { $za_found = 255; }
+   exit $za_found;
+   }
+else {
+   unless ($opt_q) { 
+      print "Passed.\n"; 
+   }
+}
+
+__END__

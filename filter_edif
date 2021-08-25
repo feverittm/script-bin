@@ -1,0 +1,16 @@
+# Script to translate []'s to ()'s
+# Useful for making sure symbols match schematics!
+#
+# 03/14/03 scl Original version
+#
+
+edif_file=$1
+tmp_file=${edif_file}.tmp
+
+sed \
+-e "s/\[/\(/" \
+-e "s/\]/\)/" \
+${edif_file} >${tmp_file}
+
+mv ${tmp_file} ${edif_file}
+

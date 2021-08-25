@@ -1,0 +1,52 @@
+#!/bin/ksh
+# Name:     make_valid.fem
+# Version:  $Header:$
+# Date:     23 April, 1997
+# Modified: Tue Feb  9 10:11:25 MST 1999
+# Author:   Floyd Moore
+#
+# Synopsis: Using Imagemagic's display program, display a new root window
+#   background during defined intervals.
+#
+
+#image_dir="/home/red/public_html/images/disneyland"
+image_dir="/home/red/public_html/images/silverfalls"
+interval=3600
+
+rm -f /tmp/stop_rotate_background
+
+if [ $# -gt 0 ]
+then
+   if [ ! -f $1 ]
+   then
+      echo "Cannot locate image file $1"
+      exit -1
+   fi
+
+   ret=`/opt/hppd/bin/identify $1 2>&1 | awk '{print $2}' -`
+   if [ ! $ret = "JPEG" ]
+   then
+      echo "Incorrect image file\n";
+      exit -1
+   fi
+
+   echo "Setting backdrop to $1"
+   display +borderwidth -geometry 1280x1024+200+150 -backdrop -window root $1
+   exit 0
+fi
+   
+if [ ! -r $HOME/.root_image ]
+then
+   ls -1 $image_dir/*.jpg | sort > $HOME/.root_image
+fi
+
+img=`head -1 $HOME/.root_image`
+
+sed '1d' $HOME/.root_image > /tmp/im_edit$$
+
+cat /tmp/im_edit$$ $img > $HOME/.root_image
+
+rm -f /tmp/im_edit$$
+
+echo $img
+display +borderwidth -geometry 1280x1024+200+150 -backdrop -window root ${img}

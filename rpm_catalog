@@ -1,0 +1,95 @@
+#!/bin/ksh
+# Name:     rpm_catalog
+# Version:  $Header:$
+# Author:   Floyd Moore
+#
+# Synopsis: Create a catalog of rpm packages and files
+#
+# Usage:    <simple usage message>
+#####################################
+#
+
+version_string='Version: \$Revision:\$'
+
+usage()
+{
+   echo "Usage: $0 {options...} <blockname>"
+   echo $version_string
+   echo
+   exit 1
+}
+
+########################
+# Define KSH functions #
+########################
+
+function parse_options
+{
+   echo $@ | tr -s " *" "\012" |
+   while read -r option
+   do
+      if [ $debug -eq 1 ]
+      then
+         echo "Processing Option: '$option'"
+      fi
+      case $option in
+      -x)          echo "Debug mode on"; debug=1;;
+
+      -V)          echo $version_string; 
+                   exit 1
+                   ;;
+
+      -v)          verbose=1;;
+
+      -?)          usage;;
+
+      -help)	   usage;;
+
+      -*)          echo "Invalid Argument: $option";   usage;;
+
+       *)          blockname=${option};;
+      esac
+   done
+   if [ $? -ne 0 ]
+   then
+     exit 1
+   fi
+}
+
+function clean_exit
+{
+   echo "Trapping on exit condition... exitting."
+   exit -1
+}
+
+##########################################
+#     Parse Arguements from command line #
+##########################################
+
+let run_errors=0
+trap "clean_exit" QUIT
+trap "clean_exit" HUP
+trap "clean_exit" TERM
+trap "clean_exit" INT
+
+# set globals
+let debug=0
+let verbose=0
+user=`whoami`
+mtype=`uname -a | cut -d" " -f5`
+
+parse_options $@
+
+script=`basename $0`
+
+echo "$script $blockname ..."
+echo "   $version_string"
+echo "---------------------------------"
+
+for pkg in `rpm -qa`
+do
+   echo "rpmPackage:	$pkg"
+   rpm -qil $pkg
+   echo
+done
+

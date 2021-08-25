@@ -1,0 +1,83 @@
+#!/bin/ksh
+#
+#       Title: za_fix
+#       Version: $Header:$
+#
+#       Script to attempt to repair the zero area structures included in 
+#       blocks
+# Initial revision
+
+usage ()
+{
+   echo "za_fix <blockname>"
+   exit
+}
+
+version="$Revision: 29 $"
+
+#####################################################################
+#parse Args.
+if [ $# -eq 0 ] 
+then
+   usage
+   exit
+fi
+
+RUN_ON_ERROR=0
+CASES=""
+verbose=0
+force=0
+cleanup=0
+while [ $# -gt 0 ]
+do
+   case $1 in
+   -V)          echo $version;exit -1;                   shift 1;;
+   -\?)                                        usage;;
+   -*)          echo "Invalid Arguement: $1";  usage;;
+   *)           blockname=${1:-"FOO_"};        shift 1;;
+   esac
+done
+
+blockpath=`get_dir $blockname`
+
+if [ -z "$blockpath" ]
+then
+   echo "Cannot locate block: '$blockname'"
+   exit -1
+fi
+
+# create artwork archive
+art_archive $blockpath
+let status=$?
+if [ $status -ne 0 ]
+then
+   echo "Artwork archive failed for block"
+   exit -1
+fi
+
+# check it for za problems
+za_check -p $blockname > /tmp/za_fix.$$
+let status=`cat /tmp/za_fix.$$ | wc -l`
+if [ $status -gt 0 ]
+then
+   let status=$status-1
+fi
+if [ $status -eq 0 ]
+then
+   echo "Artwork does not have any za problems shown in the archive"
+   echo "HINT: try running 'make_valid <blockname>'"
+   rm -f /tmp/za_fix.$$
+   exit 0
+fi
+
+echo "za_check noted $status problems in block"
+
+cd $blockpath/art_i856
+
+IFS=""
+for line in `cat /tmp/za_fix.$$ | egrep "Point|Zero"`
+do
+   echo "Fixing: $line"
+done
+
+#rm -f /tmp/za_fix.$$

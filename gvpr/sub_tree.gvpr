@@ -1,0 +1,28 @@
+// This gvpr script will take ARGV[0], find a node by that name and mark it and
+// all of its descendants.  This marked subtree can then be processed by a
+// downstream script.
+//
+// To call this script gvpr -f sub_tree -a <name_of_new_top_node>
+
+BEGIN {
+  int mark[];
+  $tvtype = TV_fwd;                 // Make sure the order of traversal is depth-first.
+}
+
+BEG_G {
+  node_t top = node( $G, ARGV[0] ); // Find the node whose name was passed as an argument.
+  $tvroot = top;                    // Make sure that node is the first one visited
+  mark[top]++;                      // Mark the node.
+}
+
+N [ mark[$] ] {
+  marked = "yes";                 // This node should be included
+
+  edge_t e;                       // Loop over all of the out edges of this node
+  for( e = fstout($); e; e = nxtout(e) ) {
+    e.marked = "yes";             // Mark the edge
+    mark[e.head]++;               // Mark the descendant node
+  }
+}
+
+END_G { $O = $G }

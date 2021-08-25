@@ -1,0 +1,20 @@
+#!/bin/ksh
+
+script="/net/hpesfem/home/red/bin/benchmark_machine.pl"
+
+
+# make list of machines to run test against
+ypcat hosts | awk '{print $3}' | 
+egrep "^fml|^hpes|^etl|^mtl" |
+egrep -v "fmlcu|tmp|^fml$|bks|ibm|f330|8330|hotel|prnt" |
+egrep -v "mtlgv|fmlxv" |
+sort -u > /tmp/list
+
+exit
+
+touch /tmp/benchmark.run
+while [ -f /tmp/benchmark.run ]
+do
+   touch /tmp/benchmark.run
+   sleep 600
+done

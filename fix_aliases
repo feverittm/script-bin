@@ -1,0 +1,14 @@
+#!/bin/ksh
+
+cd /etc/mail
+
+sed -e "s/^red:/\#red:/" aliases > /tmp/aliases.new
+
+wc=`diff aliases /tmp/aliases.new | wc -l`
+
+echo "$wc changes"
+
+if [ $wc -eq 1 ]
+then
+   echo "Changing User red in aliases file"
+fi

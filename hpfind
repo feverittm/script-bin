@@ -1,0 +1,171 @@
+#!/opt/perl/bin/perl
+
+($last,$first) = split /,/, $ARGV[0];
+
+if ($ARGV[0] =~ /^uid=/){
+   $search_term="$ARGV[0]";
+   print "UID search: $search_term\n";
+}
+elsif ($last or $first) {
+  if ($last) {
+    if ($last =~ /[0-9]+/) {
+      $last =~ s/^([0-9])([0-9]{4})$/$1-$2/;
+      $search_term = "(hptelnetnumber=*$last)";
+    } elsif ($last =~ /.@/) {
+      $search_term = "(|(mail=$last*)(preferredmail=$last*))";
+    } else {
+      $search_term = "(sn=$last*)";
+    }
+  }
+
+  if ($first) {
+    if ($last) {
+      $search_term = "(&$search_term";
+    }
+    $search_term .= "(|(givenname=$first*)(preferredgivenname=$first*))";
+    if ($last) {
+      $search_term .= ")";
+    }
+  }
+} else {
+  print <<EOHELP;
+Usage:
+  $0 <[last][,first]>
+ or
+  $0 <phone number>
+EOHELP
+
+exit 1;
+}
+  
+  print "Search term is $search_term.\n";
+  #$result = `/usr/local/bin/ldapsearch -h ldap.hp.com -b o=hp.com "$search_term"`;
+  $result = `/home/red/bin/ldapsearch -h ldap.hp.com -b o=hp.com "$search_term"`;
+  #$result .= "\n";
+  #$result .= `/net/hpesjro/opt/ldap/bin/ldapsearch -h ldap.hp.com -b o=hp.com "givenname=$first*"`;
+  
+  @records = split /\n\n/, $result;
+  
+  if ($#records == 0) {
+    print "----- 1 record found -----\n";
+  } else {
+    print "----- ", $#records+1, " records found -----\n";
+  }
+  
+  for ($i=0; $i<=$#records; $i++) {
+    @entries = split /\n/, $records[$i];
+    foreach $entry (@entries) {
+      ($key,$data) = split /=/, $entry, 2;
+      if (defined $ldap[$i]{$key}) {
+        $ldap[$i]{$key} .= ",$data";
+      } else {
+        $ldap[$i]{$key} = $data;
+      }
+    }
+    #print "$records[$i]\n------$i---------\n";
+  }
+  
+  $swap = 1;
+  while ($swap) {
+    $swap = 0;
+    for ($i=0; $i<$#records; $i++) {
+      if (compare ($i, %ldap) > 0) {
+        $temp = $ldap[$i];
+        $ldap[$i] = $ldap[$i+1];
+        $ldap[$i+1] = $temp;
+        $swap = 1;
+      }
+    }
+  }
+  
+  
+  @printfields = ("hptelnetnumber", "l", "preferredmail", "ou");
+  
+  for ($i=0; $i<=$#records; $i++) {
+    foreach $field (sort keys %{$ldap[$i]}) {
+      print "$field = $ldap[$i]{$field}\n";
+    }
+    print "\n";
+  }
+  
+  if ($ENV{TERM} eq "hpterm") {
+    $adjust = -1;
+  } else {
+    $adjust = -1;
+  }
+  
+  for ($i=0; $i<=$#records; $i++) {
+    $out = "$ldap[$i]{cn}";
+    foreach $field (@printfields) {
+      $out .= ",$ldap[$i]{$field}";
+    }
+    $out = substr $out,0,$ENV{COLUMNS}+$adjust;
+    print "$out\n";
+  }
+
+sub compare {
+  my ($i, %ldap) = @_;
+  %a = %{$ldap[$i]};
+  %b = %{$ldap[$i+1]};
+  my (@sortorder) = ("sn", "preferredgivenname", "givenname");
+  my ($result, $field);
+
+  $result = 0;
+  foreach $field (@sortorder) {
+    if ($a{$field} lt $b{$field}) {
+      $result = -1;
+      break;
+    } elsif ($a{$field} gt $b{$field}) {
+      $result = 1;
+      break;
+    }
+  }
+  return $result;
+}
+
+#Example record:
+#emailaddress=rob_sims@hp.com, ou=Employees, o=hp.com
+#emailaddress=rob_sims@hp.com
+#ntuserdomainid=COL-SPRINGS:ROBSIMS
+#objectclass=top
+#objectclass=person
+#objectclass=organizationalPerson
+#objectclass=inetOrgPerson
+#objectclass=HPOrgPerson
+#objectclass=ntUser
+#employeetype=Active - Regular
+#o=Hewlett-Packard Company
+#mail=rob_sims@hp.com
+#mail=robsims@hpesjro.fc.hp.com
+#preferredmail=robsims@hpesjro.fc.hp.com
+#departmentnumber=40RG-7901
+#manager=emailaddress=bill_jaffe@hp.com, ou=Employees, o=hp.com
+#usercertificate;binary=NOT ASCII
+#ou=SVTC-FML
+#hpbusinessregion=Americas
+#hpbusinessorganization=Business Systems & Tech Org
+#hpbusinesssector=Computing Systems
+#hporganizationchartgroup=Systems VLSI Tech Ctr
+#mailstop=88-3UP3
+#l=Colorado
+#hptelnetnumber=898-0291
+#telephonenumber=+1 (970) 898-0291
+#hpworksegment=Dedicated workspace
+#hpfullname=J R Sims
+#cn=J R Sims
+#sn=Sims
+#givenname=J R
+#hpentitycode=40
+#hpsubproductlinecode=00
+#c=US
+#hpproductlinecode=00
+#hpworkforcecode=00
+#hpdepartmentcode=7901
+#hpbusinesstypecode=00
+#hpsubentitycode=RG
+#hpdistrictcode=00
+#hpaccountcode=5022
+#uid=rob_sims@hp.com
+#modifiersname=cn=Directory Manager
+#modifytimestamp=20001020232412Z
+

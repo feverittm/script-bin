@@ -1,0 +1,112 @@
+#!/bin/ksh
+###############################################################################
+#
+# File:         notch_fill
+# RCS:          $Header:$
+# Description:  Try to fill notches on supply rails
+# Author:       Floyd Moore
+# Created:	Thu Jan  6 09:38:53 MST 2000
+# Modified:     
+# Language:     Indented Text
+# Package:      N/A
+# Status:       Experimental (Do Not Distribute)
+#
+# (C) Copyright 2000, Hewlett-Packard ESL, all rights reserved.
+#
+###############################################################################
+#
+
+program=`basename $0`
+usage()
+{
+	echo "Usage: notch_fill <blockname>"
+        echo "  -x)  set debug mode"
+}
+
+verbose=0
+
+if [ -z "$DEFAULT_PATH" ]
+then
+   echo "DEFAULT_PATH no set cannot continue"
+   exit -1
+fi
+
+set -- `getopt "xv" $*`
+
+for OPT in $*
+do
+	case $1 in
+	  -x) debug="set -x";      shift;;
+          -v) verbose=1;           shift;;
+	  --) shift; break;;
+	  -*) usage; exit 2; shift;;
+	esac
+done
+
+block=$1
+
+echo "$0: $block"
+
+##
+## Check for the rep's in the block.
+##
+blockpath=`get_dir $block`
+if [ -z "$blockpath" ]
+then
+   echo "Cannot locate block $block in blockpath"
+   usage
+   exit -1
+fi
+if [ ! -f $blockpath/conn_${ICPROCESS}/trantor.db ]
+then
+   echo "Need a conn rep trantor.db for all the pieces."
+   exit -1
+fi
+
+#
+# Start the real work
+
+cd $blockpath/art_${ICPROCESS}
+
+script="/net/hpesfem/home/red/mako/cb_scripts/notch_fill.tran"
+#debug="set -x"
+
+echo "Calling trantor to run the notch fill script..."
+echo "  Script=$script"
+trantor -f -c "$debug;batch_mode=1;$script $block" | tee /tmp/tran.out
+if [ $? -ne 0 ]; then
+   echo "  notch_fill trantor failed."
+   exit 1
+fi
+
+#
+# parse the output from the script
+if [ ! -f /tmp/tran.out ]
+then
+   echo "Cannot locate trantor output file"
+   exit -1
+fi
+
+exit
+
+# direct (3661.55,-0.2) (3668.05,0.05)
+
+echo "Calling awk..."
+
+cat /tmp/tran.out | sed 's/(//g' | sed 's/)//g' |
+awk '
+{if ($1 == "Working" ){
+   if ($3 == "METAL1:") { layer=9 }
+   if ($3 == "METAL2:") { layer=11 }
+   if ($3 == "METAL3:") { layer=13 }
+   if ($3 == "METAL4:") { layer=16 }
+   next;
+   }
+}
+{if ($1 != "direct" ){ next; }}
+{printf "ADD R%d %s %s;\n",layer,$2,$3}
+' -
+
+exit 0
+
+echo "Done."

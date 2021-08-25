@@ -1,0 +1,121 @@
+#!/bin/ksh
+# Name:     mkSpice
+# Version:  $Header: /home/red/bin/RCS/netlist_cd40,v 1.1 2005/05/11 14:44:42 red Exp $
+# Date:     Wed Dec  1 12:28:57 PST 2004
+# Author:   Floyd Moore
+#
+# Synopsis: Create the schematic spice netlist for a cd40 design
+#
+# Usage:    netlist_cd40 [<cell_name>]
+#####################################
+#
+
+ICNET_OPTS="-spice_top_sub -lvs -inline_inc -preserve_case"
+
+version_string='Version: \$Revision: 2 $'
+
+trap 'rm -f /tmp/*.tmp.$$~' 0
+
+usage()
+{
+   echo "Usage: $0 {options...} [<cell name>]"
+   echo $version_string
+   echo
+   echo "netlist_cd40 - create the spice rep"
+   echo "-x) debug"
+   echo "-v) verbose"
+   echo "-s) stop_on_error"
+   exit 1
+}
+
+##########################################
+#     Parse Arguements from command line #
+##########################################
+# set globals
+let error=0
+let debug=0
+let verbose=0
+let stop_on_error=0
+let no_fix=0;
+user=`whoami`
+mtype=`uname -a | cut -d" " -f5`
+script=`basename $0`
+
+if [ $# -gt 0 ]
+then
+   if [ $1 = "-?" -o $1 = "-help" -o $1 = "-h" ]
+   then
+      usage;
+      exit 1
+   fi
+fi
+
+for I in $*
+do
+   case "x$1" in
+   x-x)          let debug=1;                   shift 1;;
+   x-v)          let verbose=1;                 shift 1;;
+   x-s)          let stop_on_error=1;           shift 1;;
+   x-f)          shift;
+                 cell_file=$1
+                 echo "Running from cells in file: ${cell_file}"
+                 shift 1;;
+   x-\?)                                        usage;;
+   x-*)          echo "Invalid Arguement: $1";  usage;;
+   x*)           cellname=${1:-"FOO_"};         shift 1;;
+   esac
+done
+
+##################################################
+# Setup some default configuration variables.... #
+##################################################
+
+#echo "Create Spice Netlist for cell: ${cellname}"
+check=`echo ${cellname} | grep -e "^/" `
+if [ -n "$check" ]
+then
+   #echo "... full path to schematic specified in cell name"
+   dir=${cellname%/*}
+   #echo "   ... sch_dir set by path to ${dir}"
+   sch_dir=${dir}
+fi
+cellname=${cellname##*/}
+echo "${cellname}" > /tmp/cells.tmp.$$
+cell_file="/tmp/cells.tmp.$$"
+
+let total_cells=$(wc -l ${cell_file} | awk '{print $1}')
+
+let count=0
+for cell in `cat ${cell_file}`
+do
+   if [ $total_cells -gt 1 ]
+   then
+      echo "########################################"
+      echo "  $count: ${cell}"
+      echo "########################################"
+   fi
+   if [ ! -d ${sch_dir}/${cell}/${cell}.vpt ]
+   then
+      echo " ... cannot find viewpoint for cell: ${cell}"
+      /sdg/bin/clvp_ic ${sch_dir}/${cell} ${sch_dir}/ic
+      if [ $? -ne 0 ]
+      then
+         exit 1
+      fi
+   fi
+   #echo "Dumping eldo spice model for cell: $cell"
+   #icnet -spice_top_sub -eldo -inline_inc -preserve_case -o ${spice_dir}/${cell}.spi ${sch_dir}/${cell}/${cell}.vpt > log.icnet 2>&1
+   #     [[ $? -ne 0 ]] && exit 1
+   echo "Dumping LVS spice model for cell: $cell"
+   icnet -spice_top_sub -lvs -inline_inc -preserve_case -o ${lvs_dir}/${cell}.spi ${sch_dir}/${cell}/${cell}.vpt >> log.icnet 2>&1
+   [[ $? -ne 0 ]] && exit 1
+   let count=$count+1
+done
+
+rm -f ${spice_dir}/${LIBREV}.spi
+rm -f ${lvs_dir}/${LIBREV}.spi
+cat ${spice_dir}/*.spi > ${spice_dir}/${LIBREV}.spi
+cat ${lvs_dir}/*.spi > ${lvs_dir}/${LIBREV}.spi
+
+rm -f /tmp/cells.tmp.$$
+rm -f log.icnet

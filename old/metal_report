@@ -1,0 +1,943 @@
+#!/usr/local/bin/perl5 -w
+#
+#       Author:  Floyd Moore (redfc.hp.com)
+#	$Header: /home/red/bin/RCS/metal_report,v 1.1 1998/08/14 20:28:09 red Exp red $
+#	Description:
+#          Check the cuci/cuco logs to identify which changes on the database
+#          affect metal layers only.
+#
+#	"metal_report" created by red
+#
+#	$Log: metal_report,v $
+#	Revision 1.1  1998/08/14 20:28:09  red
+#	Initial revision
+#
+
+use strict;
+use subs qw(handler show_usage);
+use vars qw($opt_r $opt_v $opt_d $opt_b $opt_t);
+use POSIX qw(strftime);
+use Time::Local;
+
+my $Uid = getpwuid $<;
+my $RunDate = strftime '%Y/%m/%d %H:%M:%S', localtime;
+my $Rev = (split(' ', '$Revision: 1.1 $', 3))[1];
+my ($DirName, $ProgName);
+$0 =~ m!(.*)/!; $ProgName = $'; $DirName = $1; $DirName = '.' unless $DirName;
+
+# global variables...
+my ($chkblk, $blk);	# More global variables
+my ($cmd, $log, $rest, $secs);
+my ($user, $type, $bugid, $rep, $date, $hmsrev);
+my ($ikey, $key, @SORTED, @ACTION, %Bugs, %blk2bug, %Blocks, $entry);
+my (%Impl);
+my (%BugLog);
+my (%checklist, $lastbug, $lastblock, $lastrev, $lasttype);
+my (%temp_log);
+my %ignore;
+my $hms_in;
+my $hms_out;
+my $idx;
+
+my $Release;
+my $latest_rev;
+my $Release_str;
+my $blk_rev;
+my %blk_rev_cache;
+
+$SIG{'HUP'} =   \&handler;
+$SIG{'INT'} =   \&handler;
+$SIG{'QUIT'} =  \&handler;
+$SIG{'TERM'} =  \&handler;
+
+use Getopt::Std;
+unless (&Getopt::Std::getopts('tr:dvb:')) {
+    &show_usage();
+    exit(1);
+}
+
+sub show_usage
+{
+  print "$ProgName  $Rev\t\t$RunDate\n";
+  print "Usage: $ProgName [-dv] [-b block]\n";
+  print "  -d: Dump Internal tables\n";
+  print "  -r: Define the release to extract report\n";
+  print "  -v: Verbose output\n";
+  print "  -b <block>: Report Information on single block\n";
+  print "\n";
+  print "   This script will summarize the cuco/cuci log files into a format\n";
+  print "   that can be parsed later.\n";
+  print "\n";
+  print "   It uses: /cuda/misc/physical_action_logs/*\n";
+  print "\n";
+  exit 0;
+}
+
+sub get_dir	# Fast get_dir
+{
+    my($B) = @_;
+    return (map {"$_/$B"} grep { -d "$_/$B" } split(/:/,$ENV{'BLOCKPATH'}))[0];
+}
+
+# note this routine is not Y2K complient!
+# it will work for y2k if the input year is a 2 digit year.
+sub make_secs # convert the timestamp into unix seconds for a comparison
+{
+    my ($sec, $min, $hours, $mday, $mon, $year, $time);
+    my ($date, $tmark);
+    my($t) = @_;
+    ($date, $tmark)=split(/_/,$t,2);
+    ($mon, $mday, $year)=split(/-/,$date);
+    # y2k trap (if in year 2000 then make it 2000!)
+    if ($year < 100){
+       $year+=1900;
+    } elsif ($year == 0){
+       $year=2000;
+    }
+    # shift month back by one to line up with perl array syntax
+    $mon--;
+    ($hours, $min, $sec)=split(/:/,$tmark);
+    $time=timelocal($sec, $min, $hours, $mday, $mon, $year);
+    return($time);
+}
+
+sub handler
+{
+    my($sig) = @_;
+    warn "$ProgName:INFO: Caught a SIG$sig -- shutting down\n";
+    exit(0);
+}
+
+sub numsort_down
+{
+   $b <=> $b;
+}
+
+sub bugsort
+{
+   (split(/:/,$a))[1] cmp (split(/:/,$b))[1] # sort by block 
+      or
+   (split(/:/,$a))[0] cmp (split(/:/,$b))[0] # sort by bug
+      or
+   (split(/:/,$a))[4] <=> (split(/:/,$b))[4] # sort by time
+      or
+   $a cmp $b;  # default case
+}
+
+sub revcmp
+# sort hms revisions 1.2.1.1 < 1.3 < 1.3.3.2 < 2.0
+# a = first hms tag, b=second hms tag
+#    return -1 if $a < $b
+#    return  0 if $a = $b
+#    return +1 if $a > $b
+{
+   my $a=$_[0];
+   my $b=$_[1];
+   my @afields;
+   my @bfields;
+   my $i;
+   my $key;
+   my $cmp;
+
+
+   @afields=split(/\./,$a);
+   @bfields=split(/\./,$b);
+   for ($i=0; $i<=$#afields; $i++){
+      if (!defined($bfields[$i])){ return 1; }
+      $cmp= $afields[$i] <=> $bfields[$i];
+      #print "  compare $afields[$i] <=> $bfields[$i]: $cmp\n";
+      if ($cmp != 0) { return $cmp }
+   }
+   if ($#bfields > $#afields) { return -1; }
+   return 0;
+
+}
+
+sub ismember
+{
+   my $memb=shift(@_);
+   my $temp=join " ", @_;
+   if ($temp =~ /$memb/) { return(0); }
+   return(1);
+}
+
+sub remove_templog
+{
+   # Completely remove the temp log
+   if (defined(%temp_log)){
+      foreach $key (keys %temp_log){
+	 $opt_v && print "      Removing $key from templog: $temp_log{$key}\n";
+	 delete $temp_log{$key};
+      }
+   undef %temp_log;
+   }
+}
+
+sub remove_nobug_templog
+{
+   my ($temp, @ary);
+   # remove the $temp_log entries from the end back until the last checkout
+   #  this means nuking the last entry in the $temp_log{$bugid}.
+   if (defined(%temp_log)){
+      foreach $key (keys %temp_log){
+	 $temp=$temp_log{$key};
+	 @ary=split(/ /,$temp);
+	 pop @ary;
+	 $temp=join(" ",@ary);
+	 if (length($temp) == 0){
+	    delete $temp_log{$key};
+	    $opt_v && print "      Popping $key from templog: Key empty and removed\n";
+         } else {
+	    $temp_log{$key} = $temp;
+	    $opt_v && print "      Popping $key from templog: $temp_log{$key}\n";
+	 }
+      }
+   }
+   my $len=length(join " ", (keys %temp_log));
+   if ($len == 0){
+      undef(%temp_log);
+   }
+}
+
+sub dump_templog
+{
+   my $key;
+   if (defined(%temp_log)){
+      print "      ---- Dumping temp_log ---\n";
+      foreach $key (sort keys %temp_log){
+         print "      $key: '$temp_log{$key}'\n";
+         }
+      }
+}
+
+sub uniq_buglog
+{
+   my $idx;
+   my $id=$_[0];
+   my @fields;
+   my $list="";
+   my $item;
+   my $fix;
+   my ($blk0,$hmsi0,$hmso0);
+   my ($blk1,$hmsi1,$hmso1);
+
+   $fix=1;
+   print "\nUniqifying buglog for bug $id: $BugLog{$id}\n";
+   while (defined($fix)){
+      print "Start fix loop for '$BugLog{$id}' ...\n";
+      undef $fix;
+      $list="";
+      @fields=split(/ /,$BugLog{$id});
+      @fields=sort @fields;
+      if ($#fields == 0){ print "Single entry dropout\n"; last; }
+      for ($idx=0; $idx<$#fields; $idx++){
+         ($blk0,$hmso0,$hmsi0)=split(/:/,$fields[$idx]);
+         ($blk1,$hmso1,$hmsi1)=split(/:/,$fields[$idx+1]);
+         if ($blk0 eq $blk1){
+	    $fix=1;
+	    $list.=$blk0 . ":" . $hmso0 . ":" . $hmsi1 . " ";
+	    print "            $idx = fixing $blk0 in list: $list\n";
+	    $idx++;
+	    next;
+         } else {
+	    $list.=$blk0 . ":" . $hmso0 . ":" . $hmsi0 . " ";
+	    print "            $idx = adding $blk0 to list: $list\n";
+	    if ($idx==$#fields-1){
+	       $list.=$blk1 . ":" . $hmso1 . ":" . $hmsi1 . " ";
+	       print "            $idx = adding $blk1 to list: $list\n";
+	       }
+	    }
+      }
+      $list=~s/\s*$//;
+      $BugLog{$id}=$list;
+      print "    In process list is: $BugLog{$id}\n";
+   }
+   print "Uniqified list is: $BugLog{$id}\n";
+   if (!defined($fix)){ print "Loop End\n";}
+}
+
+
+##########################################################################
+# Start script
+print "# $ProgName  $Rev\t\t$RunDate  $Uid\n\n";
+# setup cuda environment (Needed for cuhist information).
+if ( length($ENV{'BLOCKPATH'}) == 0){
+   print "Setting up environment...\n";
+   system (". /cuda/bin/cuda_bp") && die "Could not setup the cuda env.\n";
+}
+
+if (defined($opt_b)){
+   if ($opt_b =~ /^BugBC/){
+      print "Selecting Bug: $opt_b\n";
+   } else {
+      print "Selecting block: $opt_b\n";
+      $chkblk=get_dir($opt_b);
+      if (!defined($chkblk)){ die "Invalid block: $opt_b\n";}
+      print "  found block in blockpath: $chkblk\n";
+   }
+print "\n";
+}
+
+my $ignore_file="/net/hpesfem/users/red/cuda/metal_report.ignore";
+if (-r "$ignore_file"){
+   print "Loading 'ignore_blocks' file...\n";
+   open(IGNORE,"<$ignore_file") || die "Cannot open ignore blocks file\n";
+   while(<IGNORE>){
+      chomp;
+      s/\s*//;
+      $ignore{$_}=1;
+      print "   Ignorring block: '$_'\n";
+   }
+   close(IGNORE);
+}
+
+# 
+# 0. Set the release variable
+# This is the chip release that we want to search for changes 
+# since it occurred.  For example 'rev1_03' would see all 2.X
+# changes.
+print "Getting current release...\n";
+$latest_rev=`cuhist CHPID_CUDA2/art | grep rev_ | sort -k1,4n | tail -1`;
+$latest_rev =~ s/\s*//g;
+$latest_rev =~ s/(\w+):.+/$1/;
+if (defined($opt_r)){
+   if ($opt_r !~ /rev(_\d+)+/){
+      die "Bad release variable specified: '$opt_r'\n";
+   }
+   $Release=$opt_r;
+   $Release=~ s/^rev_//;
+   $Release=~ s/_/./;
+   $Release +=0;
+   $Release_str=$opt_r;
+   printf "Extracting from release %03.2f\n", $Release;
+}
+
+# 1. Create the list of bugs to operate against in a temp file.
+# Sanitize the data from the physical_action_logs into uniform
+#   array of actions performed on the database.
+#
+$log="/tmp/mreport$$";
+$cmd="cd /cuda/misc/physical_action_logs;grep Bug * > $log";
+system ("$cmd");
+
+if ( ! -r "$log") { die "Cannot read the metal changes list: $log\n"; }
+
+if (defined($opt_v)){
+   print "\n-----------------------------------------------------------\n";
+   print "Action Extraction from physical_action_logs:\n";
+   }
+
+$lastbug="";
+$lasttype="";
+my $lasttime="";
+my %buglist;
+my $i=0;
+open(LIST,"<$log") || die "Cannot open report list for read: $log\n";
+while (<LIST>){
+   chop;
+   ($user, $rest)=split(/:/,$_,2);
+   ($type, $bugid, $rep, $date, $hmsrev)=split(/ /,$rest);
+   ($blk,$rep)=split(/\//,$rep);
+
+   if (defined($opt_b) && $opt_b !~ /^BugBC/ && $blk !~ /$opt_b/) { next; }
+
+   if (defined($ignore{$blk})){ 
+      print "Skipping Ignorred block $blk\n";
+      next;
+      }
+
+
+   if ($rep ne "art") { next; }
+
+   # reset index variable $i to be the length of the ACTION array
+   $i = $#ACTION+1;
+
+   # Now get the revision information for this block (save it in a cache...)
+   if (defined($opt_r)){
+      if (defined($blk_rev_cache{$blk})){
+         $blk_rev=$blk_rev_cache{$blk};
+      } else {
+         $blk_rev=`cuhist $blk/art | grep $Release_str`;
+         chomp $blk_rev;
+         $blk_rev=~ s/.*:\s*//g;
+	 if (length($blk_rev) == 0){
+	    print "   Block has no revision data for release $Release_str\n";
+	    $blk_rev="0.0";
+	 }
+         print "Lookup of $blk -- Release $Release is hmsrev $blk_rev\n";
+         $blk_rev_cache{$blk}=$blk_rev;
+      }
+
+      print "Checking block $blk, Revision->$hmsrev, Type->$type\n";
+      if (revcmp($hmsrev, $blk_rev) <= 0){
+         print "   Skipping old change: $hmsrev\n";
+	 if ($type eq "cuci-d"){
+	    print "   Need to cleanup old buglist entry for $bugid...\n";
+	    print "      Buglist for $blk, $bugid: $buglist{$blk}\n";
+	    if (defined($buglist{$blk})){
+	       $buglist{$blk} =~ s/$bugid\s+//;
+	       if (length($buglist{$blk}) == 0) { 
+		  delete $buglist{$blk};
+		  }
+	       }
+	    # need to remove the elements of the ACTION array that match
+	    # this bug
+	    my $r_bugid;
+	    my $rest;
+	    for ($idx=$#ACTION; $idx>=0; --$idx){
+               ($r_bugid,$rest) = split(/:/, $ACTION[$idx], 2);
+	       if ($r_bugid eq $bugid){
+	          print "Key to remove: $idx\n";
+		  splice @ACTION, $idx, 1; # remove the action entry
+		  }
+	       }
+	    }
+         next;
+	 }
+   }
+
+   $secs=make_secs($date);
+
+   # Check if the timestamp is the same
+
+   if ($bugid ne "NO_Bug"){
+      # add entry in list of bugs that are active for this block.
+      #  (handles multiple bugs open for the same block)
+      if ($lasttype eq $type && $lasttime eq $date){
+	 if (defined($buglist{$blk})){
+	    $buglist{$blk}.=" " . $bugid;
+	 } else {
+	    die "Buglist not defined in $blk, Line: $_, list line: $.\n";
+	    }
+         print "Type-Time Matched!: $lasttime, $buglist{$blk}\n";
+      } else {
+	 if (defined($buglist{$blk})){
+            delete $buglist{$blk};
+	 }
+	 $buglist{$blk}=$bugid;
+      }
+
+      # skip block/bugs if opt_b is defined
+      if (defined($opt_b) && $opt_b =~ /^BugBC/ && $bugid !~ /$opt_b/) { 
+	 #print "Skipping bug mismatch: $blk on $bugid\n";
+	 next; 
+	 }
+
+      # print logging message
+      $opt_v && print "$bugid: $blk [$hmsrev] => $type by $user on $date\n";
+
+      $lasttime=$date;
+      $lasttype=$type;
+      $lastbug=$bugid;
+      $entry="$bugid:$blk:$user:$type:$secs:$hmsrev";
+      push @ACTION, $entry;
+   } else {
+      # Sanitize the NO_Bug entries into individual cuci-n entries for each
+      #  affected bug.
+      if (!defined($buglist{$blk})){
+	 print "   Cannot locate matching named bug for block: $blk... Skipping\n";
+	 next;
+	 }
+      if (defined($opt_b) && $opt_b =~ /^BugBC/ && 
+          $buglist{$blk} !~ /$opt_b/) { 
+          next; 
+      }
+      $opt_v && print "$bugid: $blk [$hmsrev] => $type by $user on $date\n";
+      foreach $bugid (split(/ /,$buglist{$blk})){
+         print "   NoBug Conversion to $bugid\n";
+         $entry="$bugid:$blk:$user:$type:$secs:$hmsrev";
+         push @ACTION, $entry;
+      }
+   }
+}
+close(LIST);
+unless ($opt_v) {unlink($log);}
+
+print "\n-----------------------------------------------------------\n";
+print "Building Block, Bug, blk2bug xref tables....\n";
+for ($idx=0;$idx<= $#ACTION; ++$idx){
+   ($bugid,$blk,$user,$type,$secs,$hmsrev) = split(/:/, $ACTION[$idx], 6);
+   print "Action $idx:  Bug=$bugid, Block=$blk\n";
+
+   # Add entry to block list
+   if (defined($Blocks{$blk})){
+      $Blocks{$blk}=$Blocks{$blk} . ":" . $idx;
+   } else {
+      $Blocks{$blk}=$idx;
+   }
+
+   # Add entry to bug list
+   if (defined($Bugs{$bugid})){
+      $Bugs{$bugid}=$Bugs{$bugid} . ":" . $idx;
+   } else {
+      $Bugs{$bugid}=$idx;
+   }
+
+   # Add entry to blocks to bug cross reference list 
+   if (defined($blk2bug{$blk}) && $blk2bug{$blk} !~ /$bugid/){
+      $blk2bug{$blk}=$blk2bug{$blk} . ":" . $bugid;
+   } elsif (!defined($blk2bug{$blk})) {
+         $blk2bug{$blk}=$bugid;
+   }
+}
+print "\n-----------------------------------------------------------\n";
+
+print "\n-----------------------------------------------------------\n";
+print "Dumping Action Array for reference....\n";
+for ($idx=0;$idx<= $#ACTION; ++$idx){
+   print "Action $idx: '$ACTION[$idx]'\n";
+}
+print "\n-----------------------------------------------------------\n";
+
+$opt_v && print "Sorting Actions....\n";
+@ACTION=sort bugsort @ACTION;
+$opt_v && print "  ...done\n";
+
+if (defined($opt_d)){
+   print "\n-----------------------------------------------------------\n";
+   print "Dumping Internal Tables:\n";
+   print "   'Bugs' Hash:\n";
+   foreach $key (sort keys %Bugs){
+      print "      $key: $Bugs{$key}\n";
+      }
+   print "\n";
+   print "   'Blocks' Hash:\n";
+   foreach $key (sort keys %Blocks){
+      print "      $key: $Blocks{$key}\n";
+      }
+   print "\n";
+   print "   'blk2bug' xref Hash:\n";
+   foreach $key (sort keys %blk2bug){
+      print "      $key: $blk2bug{$key}\n";
+      }
+   print "\n";
+}
+
+
+####################################################################
+# This is the State Machine for determining the source and destination 
+#   HMS revisions associated with a changed block and Bug:
+#
+#   Assumptions
+#   1. Bug actions are sorted by block and then by the time of the action
+#
+#   2. Bugs are required to flow through atomically (ie one set of changes
+#      must be completed before another set is allowed.  Therefore a cuco
+#      for a block must be followed by a cuci for the same block or another
+#      cuco for another block associated with the same bug.
+# 
+#   3. If a block does not change on checkin, or the user calls "cuci -n",
+#      then no bug number is required (since nothing is changed) and the
+#      physical_action_logs record "NoBug" for EACH block.
+#      
+###########
+#  Physical action logs will save:
+#  BugId Type block/rep datestamp hmsrev
+#    BugId= Either BugBC## or NoBug
+#    Type= See below
+#    rest is self explanitory.
+#  
+###########
+#   Action Types:
+#   cuco   = Cuda Checkout
+#   cuci   = Cuda Checkin
+#   cuci-d = Changes Deferred and database reverted to previous revision.
+#   cuci-i = Changes Accepted for this tape release.
+#   cuco-r = Checkout certain revision (ie hms pointer moves backward!)
+#
+###########
+#  For each block extracted from the physical action logs.
+#
+#   If we see a 'cuco' for a block then save the cuco information in the
+#     form: $temp_log{$bugid} = "$blk_$hmsrev"; Note this is the hmsrev of
+#     the checkout.  Append it to the hash if it already exists!
+#
+#   If we see a 'cuci-i' (Implement the fix) then we can note it or just
+#     continue.
+#
+#   If we see a 'cuci-d' (deferred bug fix) then we can remove the temp hash
+#     associated with this block since no changes are to be made to the 
+#     database for the release.
+#
+#   If we see a 'cuci' then add its information to the cuco information in the
+#     form: $temp_log{$bugid} .= ":$hmsrev"; This saves the HMS of the checkin.
+#
+#   If we see a 'NoBug' within the same block information, then it must be
+#     for this bug (or group of bugs) by Assumption #2.  Therefore remove
+#     then temp hash (note that another block for the same bug will not
+#     yet be in the hash since Assumption #1, and #3).
+#
+#   When the block name changes then we are done processing this block and
+#     we can then save it to the $BugLog hash.
+#
+###########
+#   The script will report information on:
+#   1 - Logging information (cuci-i, cuco-r)
+#   2 - All lines starting with '#' are comments,debug,logging information
+#       and can be ignorred.  Special cammands are included:
+#       COMMENT
+#       LOG
+#       DEBUG
+#       These should also be filtered out.
+#   3 - The first line will include a datestamp.
+#   4 - Checklist report, with each line:
+#       Blockname BugId State cuci_hms cuco_hms
+#   where state is the same as defined above.  A line will occur for each 
+#   bug a block effects.
+
+$lastbug="";
+$lastblock="";
+$lastrev="";
+$lasttype="";
+my $dbstate="";
+my $implemented="";
+print "\n-----------------------------------------------------------\n";
+print "$#ACTION Actions to parse...\n";
+for ($i=0;$i<=$#ACTION;$i++)
+{
+   ($bugid,$blk,$user,$type,$secs,$hmsrev)=split(/:/,$ACTION[$i]);
+   # is this the same block as we last saw?
+   if ($blk eq $lastblock){
+      if (defined($opt_b)){ print "\n"; }
+      $opt_v && print "   $ACTION[$i]\n";
+
+#
+# cuci: checkin changes
+#
+      if ($type eq "cuci"){
+	 #  User requested a 'cuci' checkin:
+	 #    either there are changes to the block (implying a change
+	 #       in revision number)
+	 #    or the checking only resets the permissions (NO_Bug checkin)
+	 #       and we can remove the cuco/cuci pair.
+	 #
+	 #  No change to the database occurred.
+	 #  Two possible transitions:
+	 #    1. This was the first checkout/checkin sequence and we can
+	 #       then remove the temp_log entry.
+	 #    2. This is further along in a sequence and we only want to
+	 #       remove the part of the sequence that is affected here.
+	 #
+	 #  Normal Checkin with changes
+	 #
+	 if (defined($temp_log{$bugid})){
+	    # if the temp_log already exists then this is another checkin
+	    # applied to the same block...  unless we have never see a 
+	    # checkin for this block.  In that case just add it to the end 
+	    # of the string.
+	    if ($temp_log{$bugid} =~ /[\w_]+:[\d.]+:[\d.]+/){
+	       $opt_v && print "   Additional Checkin of $blk...\n";
+	       $opt_v && print "      Old tag was: $temp_log{$bugid}\n";
+	       ($blk,$hms_in,$hms_out)=split(/:/,$temp_log{$bugid},3);
+	       $temp_log{$bugid} = $blk . ":" . $hms_in . ":" . $hmsrev;
+	       }
+            else {
+	       $opt_v && print "   First Checkin of $blk...\n";
+	       $temp_log{$bugid} .= ":" . $hmsrev;
+	       }
+	 #
+	 # Default error trap...
+	 #  We saw a checkin without ever seeing the associated checkout
+	 #  of the same block.
+	 #
+	 } else {
+	    $opt_v && print "   Checkin of $blk...\n";
+	    print "ERROR: Cuci occurred without cuco: $blk, $bugid\n";
+	    }
+      }
+
+#
+#  cuci-n: Revert changes to last check'd in revision
+#
+      elsif ($type eq "cuci-n"){
+	 $opt_v && print "   cuci-n: Reverting block changes to last check'd in revision.\n";
+	 $bugid=$lastbug; 
+	 if (defined($temp_log{$bugid})){
+	    $opt_v && print "   Old log[$bugid]=$temp_log{$bugid}\n";
+	    if ($temp_log{$bugid} !~ /[\w_]+:[\d.]+:[\d.]+/){
+	       $opt_v && print "LOG:  cuci-n found as only change.  Removing temp_log\n";
+	       $bugid=$lastbug; 
+	       # using this routine means that when a 'cuci-i' occurs that
+	       # we save the log at that time.
+               remove_nobug_templog();
+            } else {
+	       $opt_v && print "LOG:  NO-OP cuci-n found on a valid temp_log\n";
+	    }
+         } else {
+	    print "ERROR:  cuci-n found without temp_bug defined: $bugid.\n";
+	    print "ERROR:     the physical_action log are probably out\n";
+	    print "ERROR:     of whack for user: $user\n";
+	 }
+      }
+
+#
+#  cuci-d: Defer change back to last revision targetted for release
+#     Database was modified and cuco,cuci has occurred.  We however
+#     do not want these changes.
+#
+      elsif ($type eq "cuci-d"){
+	 $opt_v && print "   Defferring the changes to $blk for $bugid back to tagged revision $hmsrev\n";
+	 # cuci-d will give us the new revision tag.  cuci-d will reset
+	 # all changes back for this block, back to that tag.  
+	 if (defined($temp_log{$bugid})){
+	    $opt_v && print "      Old tag was: $temp_log{$bugid}\n";
+	    ($blk,$hms_in,$hms_out)=split(/:/,$temp_log{$bugid},3);
+	    delete $temp_log{$bugid};
+	    }
+         else {
+	    print "ERROR:  cuci-d was seen but nothing else was seen for $blk?\n";
+	    print "ERROR:   temp_log for $bugid was not defined when the 'cuci -d' was found.\n";
+	    }
+	 }
+
+#
+#  cuci-i: Mark changes for use in next release.  Block is already check'd in.
+#          Save changes to the 'real' Bug fix hash.
+#
+
+      elsif ($type eq "cuci-i"){
+	 print "LOG: Implement Bug Fix for $blk, for bug $bugid\n";
+         # save the temp_log information for the previous block...
+         if (defined($temp_log{$bugid})){
+	    $opt_v && print "   Saving $bugid: $temp_log{$bugid}\n";
+	    $ikey=$blk . "_" . $bugid;
+	    $opt_v && print "      saving as Implemented: $ikey\n";
+	    $Impl{$ikey}=grep "$blk",$temp_log{$bugid};
+
+            if (defined($BugLog{$bugid})){
+	       if ($BugLog{$bugid} =~ /$blk/){
+                  $BugLog{$bugid} .= " " . $temp_log{$bugid};
+	          print "   Redefined Buglog for $blk: $BugLog{$bugid}\n";
+		  uniq_buglog($bugid);
+	       }
+	       else {
+                  $BugLog{$bugid} .= " " . $temp_log{$bugid};
+	       }
+            } else {
+               $BugLog{$bugid}=$temp_log{$bugid};
+	       }
+
+	    delete $temp_log{$bugid};
+         }
+      }
+
+#
+#  cuco: Checkout
+#
+
+      elsif ($type eq "cuco") {
+	 $opt_v && print "   Checkout $bugid within the same block: $blk\n";
+	 if (defined($temp_log{$bugid})){
+	    ($blk,$hms_in,$hms_out)=split(/:/,$temp_log{$bugid},3);
+	    $opt_v && print "      HMSrev=$hmsrev\n";
+	    if (defined($opt_t)){
+	       print "         ---->Uninit trap: Temp_log=$temp_log{$bugid}\n";
+	       print "         ---->Uninit trap: hms_out=$hms_out\n";
+	       print "         ---->Uninit trap: hmsrev=$hmsrev\n";
+	    }
+	    if ($hms_out ne $hmsrev){
+	       print "ERROR:  Checkout and Checkin Revisions do not match!\n";
+	       }
+	 } else {
+	    $temp_log{$bugid} = $blk . ":" . $hmsrev;
+	    $opt_v && print "   Creating the temp_log entry for $bugid: $temp_log{$bugid}\n";
+	 }
+         # DBGFEM063098 next; 
+      }
+
+#
+#  cuco: Checkout a marked previous revision.
+#
+
+      elsif ($type eq "cuco-r"){
+	 $opt_v && print "   Block $blk re-check'd out to revision $hmsrev\n";
+	 $temp_log{$bugid} = $blk . ":" . $hmsrev;
+	 }
+
+#
+#  Error trap.  We are seeing an operation (cuci,cuco) that should not
+#    occur here.
+#
+      else {
+	 print "ERROR: Bad database operation type found: $type\n";
+	 next;
+	 }
+
+
+      # save state
+      $lastrev=$hmsrev;
+      $lastbug=$bugid;
+      $lastblock=$blk;
+
+      if (defined($temp_log{$bugid})){
+         $opt_v && print "      Temp_log[$bugid]='$temp_log{$bugid}'\n";
+      }
+   } else {
+
+   # new block found...
+      $opt_v && print "\n";
+      $opt_v && print "Block $blk: $bugid, $hmsrev\n";
+      $opt_v && print "   $ACTION[$i]\n";
+
+      # save the temp_log information for the previous block...
+      if (defined(%temp_log)){
+         $opt_v && dump_templog();
+         foreach $key (keys %temp_log){
+	    $opt_v && print "   Saving $key: $temp_log{$key}\n";
+            if (defined($BugLog{$key})){
+	       $temp_log{$key} =~ s/^\s*//;
+               $BugLog{$key} .= " " . $temp_log{$key};
+	       #print "Adding to BugLog for $key = '$BugLog{$key}'\n";
+            } else {
+	       $temp_log{$key} =~ s/^\s*//;
+               $BugLog{$key}=$temp_log{$key};
+	       #print "BugLog for $key = '$BugLog{$key}'\n";
+	       }
+	    delete $temp_log{$key};
+         }
+      undef %temp_log;
+      }
+      
+      # now work on the new block
+      # log entry for new block in the temp log
+      if ($type eq "cuco") {
+	 if (defined($temp_log{$bugid})){
+	    $temp_log{$bugid} .= " " . $blk . ":" . $hmsrev;
+	 } else {
+	    $temp_log{$bugid} = $blk . ":" . $hmsrev;
+	    $opt_v && print "   Creating the temp_log entry for $bugid: $temp_log{$bugid}\n";
+	 }
+      }
+      else {
+	 if (defined($Release)){
+	    $temp_log{$bugid} = $blk . ":" . $blk_rev_cache{$blk} . ":" . $hmsrev;
+	 } elsif ($hmsrev eq "1.1"){
+	    print "LOG: New Block $blk found: $user, $type\n";
+	    $temp_log{$bugid} = $blk . ":0.0:" . $hmsrev;
+         } else {
+	    print "LOG: Out-of-order change found: $blk, $user, $type to $hmsrev\n";
+	 }
+      }
+   }
+   $lastblock=$blk;
+   $lastbug=$bugid;
+}
+
+# save the temp_log information for the last block...
+if (defined(%temp_log)){
+   $opt_v && print "   Saving Information from last block in list:\n";
+   $opt_v && dump_templog();
+   foreach $key (keys %temp_log){
+      $opt_v && print "   Saving $key: $temp_log{$key}\n";
+      if (defined($BugLog{$key})){
+         $temp_log{$key} =~ s/^\s*//;
+         $BugLog{$key} .= " " . $temp_log{$key};
+	 #print "Adding to BugLog for $key = '$BugLog{$key}'\n";
+      } else {
+         $temp_log{$key} =~ s/^\s*//;
+         $BugLog{$key}=$temp_log{$key};
+	 #print "BugLog for $key = '$BugLog{$key}'\n";
+      }
+      delete $temp_log{$key};
+   }
+   undef %temp_log;
+}
+
+# check for validity of the blocks first check/d out revision...
+#   if the first check'd out revision is not the save as what was
+#   tagged for rev_1_03 then that means that the physical_action_logs
+#   are out-of-date for that block and need to be fixed.  A change
+#   was made before the Bug and revision number tagging was put into
+#   cuco and cuci.
+# Use:
+#   cuhist <block>/art | grep rev_1_03
+my $firstfix;
+my $fixkey;
+my $bug;
+my $savefix;
+my $rev103_hmsrev;
+my $target_rev="rev_1_03";
+
+print "\n";
+print "\n----------------------------------------------------------------\n";
+print "Block physical_action_log cross-check:\n";
+foreach $key (sort keys %Blocks){
+   $savefix="9.9";
+   $rev103_hmsrev=`cuhist $key/art | grep "rev_1_03"`;
+   chomp $rev103_hmsrev;
+   $rev103_hmsrev=~s/\s*rev_1_03:\s*//g;
+   $rev103_hmsrev=~s/\s*//g;
+   print "   Crosschecking revision trail for block $key\n";
+   if (length($rev103_hmsrev)==0) { print "    $key: New Block\n"; next; }
+   print "      Revision 1.03 release was block revision $rev103_hmsrev\n";
+   print "         Buglist=$blk2bug{$key}\n";
+   foreach $bug (split(/:/,$blk2bug{$key})) {
+	 undef $firstfix;
+	 if (!defined($BugLog{$bug})){ 
+	    print "   drop-thru BugLog not defined\n"; 
+	    next; 
+	    }
+	 print "      Debug:  working with Block=$key, Bug=$bug\n";
+	 $ikey=$key . "_" . $bug;
+	 foreach $fixkey (split(/ /,$BugLog{$bug})){
+            ($blk,$rest)=split(/:/,$fixkey,2);
+	    if ($blk eq $key) { $firstfix=$fixkey; last; }
+	 }
+	 if (!defined($firstfix)){ 
+	    print "      Can't find $blk in BugLog list... must not have changed!\n";
+	    next;
+	    }
+         if ($firstfix !~ /[\w_]+:[\d.]+:[\d.]+/){
+            ($blk,$hms_in,$rest)=split(/:/,$firstfix,3);
+            }
+         else {
+            ($blk,$hms_in,$hms_out)=split(/:/,$firstfix,3);
+            }
+         print "      Debug: Block='$key', Key='$bug', Firstfix='$hms_in'\n";
+	 if (revcmp($hms_in,$savefix) < 0) { 
+	    #print "Saving $hms_in as first fix for bug $bug\n";
+	    $savefix = $hms_in; 
+	    }
+      }
+   if (!defined($firstfix)){ next; }
+   if ($rev103_hmsrev ne $savefix){
+      print "WARN:  Warning Block $key probably has a bad physical_action_log\n";
+      print "   HMS Tag for Revision 1.03 was $rev103_hmsrev\n";
+      print "   The first check'd out revison in the action_logs was: $savefix\n";
+      }
+   }
+print "\n";
+
+###############################################################
+# reformat data in the BugLog hash for the final report by blocks
+#
+my @fields;
+my $state="Open";
+
+print "\n----------------------------------------------------------------\n";
+print "\nDumping the report:\n";
+foreach $key (sort keys %BugLog){
+   #print "Working on BugLog key='$key': Log='$BugLog{$key}'\n";
+   @fields=split(/ /,$BugLog{$key});
+   foreach $i (@fields){
+      $state="Open";
+      if ($i !~ /[\w_]+:[\d.]+:[\d.]+/){
+         #print "   DEBUG: Hit working state\n";
+         $state="Working";
+         }
+      #print "   Debug: Key='$key', Field='$i', State=$state\n";
+      if ($state ne "Working"){
+         ($blk,$hms_in,$hms_out)=split(/:/,$i,3);
+	 $ikey=$blk . "_" . $key;
+         if (defined($Impl{$ikey})) { 
+	    $state="Implemented"; 
+	    }
+      } else {
+         ($blk,$hms_in)=split(/:/,$i,2);
+	 $hms_out="chk'd_out"
+      }
+      printf "%-15s %9s %11s %10s %10s\n",$blk,$key,$state,$hms_in,$hms_out;
+   }
+}
+
+__END__

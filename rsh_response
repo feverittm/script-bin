@@ -1,0 +1,6 @@
+waiting for interactive job to be scheduled ...
+Your interactive job 1605 has been successfully scheduled.
+Establishing /opt/ssh/bin/ssh -A session to host hpcviag.cv.hp.com ...
+ssh_exchange_identification: Connection closed by remote host
+/opt/ssh/bin/ssh -A exited with exit code 255
+

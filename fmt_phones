@@ -1,0 +1,187 @@
+#!/usr/bin/perl5
+# $Header: $ 
+# Author: Floyd Moore
+# Date: 21, February 1994
+# Description:
+#   Format the .phones file for saving to an ascii file.
+#
+# $Log:$
+# 
+# start here...
+#Global Variables:
+$version="RCS info \$Header:\$";
+
+$verbose=0;
+$debug=0;
+$ecm=0;
+$prefer_home=0;
+$prefer_busi=1;
+
+while (defined($ARGV[0])){
+   $_ = shift;
+   if ($debug==1){
+      print "Option: '$_'\n";
+      }
+
+   s/^\s*//g;
+   if (/^-V/){
+      die "$version\n";
+      }
+   elsif (/-v/){
+      $verbose=1;
+      }
+   elsif (/-x/){
+      $debug=1;
+      }
+   elsif (/-e/){
+      $ecm=1;
+      }
+   elsif (/-h/){
+      $prefer_home=1;
+      $prefer_busi=0;
+      }
+   elsif (/-b/){
+      $prefer_home=0;
+      $prefer_busi=1;
+      }
+   elsif ((/-u/) || (/-\?/)){
+      &Usage();
+      die "\n";
+      }
+   else {
+      &Usage();
+      die "Unrecognized command line switch: $_\n";
+   }
+}
+
+$line_count=0;
+open(LIST,"</users/red/.phonebook")||die"Cannot open phonelist file\n $!\n";
+while(<LIST>){
+   s/\|/@/g;
+   if ($. == 1 ){next;}
+   chop;
+   ($name,$business,$home,$address,$d2,$notes,$bday,$lastcall)=split("@",$_,8);
+   $item=$.-1;
+   if ($ecm==0){
+      $print_lines=3;
+      print "Item $item:\n\n";
+      print "  Name: $name\n";
+      if (length($business)==0 && length($home)==0){
+         print " No Phone Number Available\n";
+         }
+      if (length($business)>0){
+         print "  Phone Number (Business): $business\n";
+         }
+      if (length($home)>0){
+         print "  Phone Number (Home):     $home\n";
+         }
+      if (length($bday)>0){
+         ++$print_lines;
+         print "  Birthday: $bday\n";
+         }
+      if (length($lastcall)>0){
+         ++$print_lines;
+         print "  Last Called: $lastcall\n";
+         }
+      if (length($address)>0){
+         ++$print_lines;
+         print "  Address\n";
+         $address=~s/\\n/@/g;
+         while (length($address)>0){
+            ($line,$address)=split("@",$address,2);
+            ++$print_lines;
+            print "    $line\n";
+            }
+         }
+      if (length($notes)>0){
+         ++$print_lines;
+         print "  Notes:\n";
+         $notes=~s/\\n/@/g;
+         while (length($notes)>0){
+            ($line,$notes)=split("@",$notes,2);
+            ++$print_lines;
+            print "    $line\n";
+            }
+      }
+      if ($print_lines%2==0){
+	 print "\n";
+      } else {
+	 print "\n";
+	 }
+   }
+   else {
+      $home=~s/\s*//g;
+      $home=~s/-//g;
+      $home=~s/\(//g;
+      $home=~s/\)//g;
+      $business=~s/\s*//g;
+      $business=~s/-//g;
+      $business=~s/\(//g;
+      $business=~s/\)//g;
+      $faxnum="";
+
+      #if (length($address)>0){
+      #   $address=~s/\\n/@/g;
+      #   while (length($address)>0){
+      #      ($line,$address)=split("@",$address,2);
+      #      print "    $line\n";
+      #      }
+      #   }
+      $addnum="";
+      $city="";
+      $state="";
+      $zipcode="";
+
+      $ncnt=0;
+      if(length($notes)>0){
+         $notes=~s/\\n/@/g;
+         while (length($notes)>0 && $ncnt < 5){
+            ($line,$notes)=split("@",$notes,2);
+            $note[$ncnt]=$line;
+	    ++$ncnt;
+            }
+         if ($ncnt < 5){
+	    for($i=$ncnt;$i<5;$i++){
+               $note[$i]="";
+	       }
+            }
+      }
+      else {
+	 $note[0]="";
+	 $note[1]="";
+	 $note[2]="";
+	 $note[3]="";
+	 $note[4]="";
+	 }
+
+      # 1: Name
+      # 2: Phone
+      # 3: Placeholder for company name
+      # 4: Birthday
+      # 5: Last Called on date
+      # 6: Address, City, State, ZIP
+      # 7: Home Phone
+      # 8: City
+      # 9: Fax Number
+      # 10: State
+      # 11: Zip
+      # 12-16:Notes Section is 5 lines (12-16)
+
+      if ($prefer_busi==1){
+         print "\"$name\",\"$business\",\"\",\"$bday\",\"$lastcall\",\"$addnum\",\"$home\",\"$city\",\"$faxnum\",\"$state\",\"$zipcode\",\"$note[0]\",\"$note[1]\",\"$note[2]\",$note[3]\",\"$note[4]\"\n";
+	 }
+      else {
+         print "\"$name\",\"$home\",\"\",\"$bday\",\"$lastcall\",\"$addnum\",\"$home\",\"$city\",\"$faxnum\",\"$state\",\"$zipcode\",\"$note[0]\",\"$note[1]\",\"$note[2]\",$note[3]\",\"$note[4]\"\n";
+	 }
+   }
+}
+
+  ###################
+  ### Subroutines ###
+  ###################
+
+  sub Usage {
+     print "$version:\n";
+     print "fmt_phones [-v -x -V ]\n";
+  }
+

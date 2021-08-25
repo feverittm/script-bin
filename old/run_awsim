@@ -1,0 +1,259 @@
+#!/bin/ksh
+#
+#       Title: run_awsim
+#       Version: $Header: run_awsim,v 1.9 94/11/18 09:50:44 red Exp $
+#
+#	Script to run the awsim vectors for a block (all vectors in a
+#         blocks directories which are named by TEST[0-9].  The vectors
+#         are ran in batch mode using "make_awsim -e..." and then the
+#         results are checked for failures.
+#
+# Initial revision
+
+usage ()
+{
+   echo "run_awsim: $Header: run_awsim,v 1.9 94/11/18 09:50:44 red Exp $"
+   echo "run_awsim [-s] [-cTEST_CASE ] <blockname>"
+   echo "  -s: don't stop on an error"
+   echo "  -v: set Verbose mode"
+   echo "  -c: cleanup mode.  Remove raw files after run, compress decks"
+   echo "  -f: force awsim to re-run all valid cases"
+   echo "  -c<case>: Run specifed case(s)"
+   exit
+}
+
+version="$Revision: 1.9 $"
+
+function check_valid 
+{
+   let changed=-1
+   if [ $force -eq 1 ]
+   then
+      return -1
+   fi
+
+   if [ ! -f $blockpath/awsim/$1/list ]
+   then
+      return -1
+   fi
+
+   if [ ! -f $blockpath/awsim/$1/deck -o ! -f $blockpath/awsim/$1/deck.Z ]
+   then
+      return -1
+   fi
+   
+   let changed=`find $blockpath/awsim/$1 -newer $blockpath/awsim/$1/list \( -name deck -o -name deck.Z \) | wc -l`
+   if [ $changed -ne 0 ]
+   then
+      return $changed
+   fi
+
+   let changed=`find $blockpath/awsim -newer $blockpath/awsim/$1/list \( -name fet_file -o -name awsim.db \) | wc -l`
+   return $changed
+}
+
+function waitforlist
+{
+   let changed=-1
+   let waiting=0
+   let changed=`find $blockpath/awsim/$1 -newer $blockpath/awsim/$1/list \( -name deck -o -name deck.Z \) | wc -l`
+   while [ $changed -gt 0 -a $waiting -lt 10 ]
+   do
+      sleep 1
+      echo ".\c"
+      touch $blockpath/awsim/$1/list
+      let changed=`find $blockpath/awsim/$1 -newer $blockpath/awsim/$1/list \( -name deck -o -name deck.Z \) | wc -l`
+      let waiting=$waiting+1
+   done
+   if [ $waiting -eq 10 ]
+   then
+      echo "waited too long!"
+   fi
+   touch $blockpath/awsim/$1/list
+}
+
+#####################################################################
+#parse Args.
+if [ $# -eq 0 ] 
+then
+   usage
+   exit
+fi
+
+RUN_ON_ERROR=0
+CASES=""
+verbose=0
+force=0
+cleanup=0
+while [ $# -gt 0 ]
+do
+   case $1 in
+   -V)          echo $version;exit -1;                   shift 1;;
+   -s)          RUN_ON_ERROR=1;                          shift 1;;
+   -c)          let cleanup=1;                           shift 1;;
+   -v)          let verbose=1;                           shift 1;;
+   -f)          let force=1;                             shift 1;;
+   -c*)         
+      run_case=`echo $1 | awk '{print substr($0,3,length($0))}' -`;
+      if [ -z "$CASES" ]
+      then
+         CASES="$run_case";
+      else
+         CASES="$CASES $run_case";
+      fi
+      shift 1;;
+   -\?)                                        usage;;
+   -*)          echo "Invalid Arguement: $1";  usage;;
+   *)           blockname=${1:-"FOO_"};        shift 1;;
+   esac
+done
+
+if [ ! -z "$CASES" ]
+then
+   echo "run_awsim: Running on test cases: $CASES"
+fi
+
+####################################################################
+
+blockpath=`get_dir $blockname`
+
+if [ -z "$blockpath" ]
+then
+   echo "Cannot locate block: '$blockname'"
+   exit -1
+fi
+
+let status=-1
+if [ -d $blockpath/awsim ] 
+then
+    if [ $verbose -eq 1 ]
+    then
+       echo "$0 $blockpath "
+    else	
+       echo "$0 $blockname ... \c"
+    fi
+    if [ ! -f $blockpath/awsim/awsim.db -o ! -f $blockpath/awsim/alias_file ]
+    then
+       echo "\nERROR: Block has not been formatted for awsim"
+       echo "Hint: Run 'make_awsim -m[sch,art] <blockname>"
+       exit -1
+    fi
+
+    if [ ! -z "$CASES" ]
+    then
+       TESTS=$CASES
+    else
+       TESTS=`find $blockpath/awsim \( -name deck -o -name deck.Z \) -exec dirname {} \; | sort`
+    fi
+    if [ -z "$TESTS" ]
+    then
+       let status=0
+       let ran_case=0
+       echo "No decks found...\c"
+       break
+    fi
+    for case_list in ${TESTS}
+    do
+       let ran_case=0
+       case=`basename $case_list`
+       if [ $verbose -eq 1 ]
+       then
+	  echo "   ${case}:"
+       else
+	  echo "${case}\c"
+       fi
+       if [ -f $blockpath/awsim/$case/deck -o -f $blockpath/awsim/$case/deck.Z ]
+       then
+          check_valid ${case}
+	  let aw_stat=$?
+          let compressed_deck=0
+          if [ -f $blockpath/awsim/$case/deck.Z ]
+          then 
+	     if [ $verbose -eq 1 ]
+	     then
+	        echo "      Uncompressing deck"
+             else
+	        echo ".UZ.\c"
+	     fi
+	     uncompress $blockpath/awsim/$case/deck
+	     let compressed_deck=1
+          fi
+	  if [ $aw_stat -ne 0 ]
+	  then
+	     if [ $verbose -eq 1 ]
+	     then
+	        echo "      Running awsim for case $case\c"
+             else
+	        echo ".r.\c"
+	     fi
+	     let ran_case=$ran_case+1
+	     rm -f $blockpath/awsim/$case/list
+             rm -f $blockpath/awsim/$case/raw
+             make_awsim -e $case $blockname > /dev/null 2>&1
+          fi
+	  let status=0
+          let level=`tail -2 $blockpath/awsim/$case/list | head -1 | \
+	     cut -d= -f2 | cut -d" " -f1`
+          let imp=`tail -2 $blockpath/awsim/$case/list | head -1 | \
+	     cut -d= -f3 | cut -d" " -f1`
+          let vect=`tail -2 $blockpath/awsim/$case/list | head -1 | \
+	     cut -d= -f4 | cut -d" " -f1`
+          let sim=`tail -2 $blockpath/awsim/$case/list | head -1 | \
+	     cut -d= -f5 | cut -d" " -f1`
+          let drive=`tail -2 $blockpath/awsim/$case/list | head -1 | \
+	     cut -d= -f6`
+          let assert=`tail -1 $blockpath/awsim/$case/list | \
+	     cut -d= -f2 | cut -d" " -f1`
+          let fails=`tail -1 $blockpath/awsim/$case/list | cut -d= -f3`
+	  let status=$drive+$imp+$vect+$sim+$drive+$fails
+          if [ $verbose -eq 1 -o $status -ne 0 ] ; then
+	     echo ""
+	     tail -2 $blockpath/awsim/$case/list
+	     if [ $status -ne -0 -a $RUN_ON_ERROR -eq 0 ]
+	     then
+	        break
+             fi
+	     if [ $cleanup -eq 1 ]
+	     then
+		rm -f raw
+             fi
+          fi
+          if [ $cleanup -eq 1 -o $compressed_deck -eq 1 ]
+          then 
+	     if [ $verbose -eq 0 ]
+	     then
+	        echo ".Z.\c"
+	     fi
+	     compress $blockpath/awsim/$case/deck
+	     let compressed_deck=0
+          fi
+	  if [ $verbose -eq 0 ]
+	  then
+             echo "...\c"
+	  fi
+	  waitforlist ${case}
+       else
+	  if [ $verbose -eq 0 ]
+	  then
+	     echo "??...\c"
+	  fi
+       fi
+    done
+
+    if [ $status = 0 ]
+    then
+	if [ $ran_case -eq 0 ]
+	then
+	   echo "no cases ran, all up to date"
+        else
+	   echo successful
+        fi
+    else
+	echo failed
+    fi
+    exit $status
+else
+    print "Warning no awsim info exists for $blockname at $blockpath"
+    exit 2
+fi
+

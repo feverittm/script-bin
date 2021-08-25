@@ -1,0 +1,1 @@
+hpterm -fn kana.12x24 -geometry 80x40+1+1 -title kanab3 -n kanab3 -fg yellow -bg darkslategrey &

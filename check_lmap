@@ -1,0 +1,38 @@
+#!/usr/bin/perl -w
+
+use strict;
+use vars qw($rc $loaded $opt_d $opt_v);
+use lib "blib/lib";
+use Getopt::Std;
+
+use MGC::LocationMap;
+
+unless (&Getopt::Std::getopts('dv')) {
+  die "Bad option\n";
+}
+
+if (defined($opt_v)){
+   $MGC::LocationMap::verify=1;
+   $MGC::LocationMap::verify_strict=1;
+}
+
+$loaded = 1;
+print "ok 1\n";
+
+print "#new\n";
+
+#my $rc = new MGC::LocationMap("/tmp/flatfile");
+my $rc = new MGC::LocationMap();
+
+#print "#load\n";
+#my $return = $rc->load();
+
+#$rc->save_as("/tmp/flatfile");
+
+if (defined($opt_d)){
+   use Data::Dumper;
+   local $Data::Dumper::Indent=1;
+
+   print Data::Dumper->Dump([\$rc], ["*rc"]);
+}
+

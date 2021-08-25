@@ -1,0 +1,201 @@
+#!/usr/bin/perl5 -w
+use strict;
+use Socket;
+use Text::ParseWords;
+
+use vars qw($logfile $clientAddress $rfc1413 $username $localTime $httpRequest);
+use vars qw($statusCode $bytesSentToClient $referer $clientSoftware);
+use vars qw($opt_x $opt_a $opt_v $opt_f %Client $clientName %PageAccessed);
+use vars qw($opt_b $opt_p $opt_m);
+use vars qw(%BadName %BadAddr %IPAddrCache);
+my $pageThreshold = 5;
+
+use Getopt::Std;
+unless (&Getopt::Std::getopts('xavf:bpm:')) {
+        print "Usage: check_apache_logs [-xva] -f <logfile>\n";
+        print " -x: debug mode\n";
+        print " -v: verbose mode\n";
+        print " -a: include all addresses \n";
+        print " -b: dump bad addresses\n";
+        print " -p: dump page access report\n";
+        print " -m <machine>: find machine accesses\n";
+        print " -f logfile\n";
+        exit(1);
+}
+
+if (defined($opt_m)){
+   my $ipaddr;
+   my $Address;
+   my $hostname;
+   if ($opt_m =~ /^\d+\.\d+\.\d+\.\d+/){
+      print "debug = '$opt_m'\n";
+      $ipaddr = inet_aton($opt_m);
+      $hostname  = gethostbyaddr($ipaddr, AF_INET);
+      #print "   ... filter $opt_m as $hostname";
+      unless(defined($hostname)){
+         die "Cannot map ip address $opt_m into hostname\n";
+      }
+      $Address=$opt_m;
+   } else {
+      $hostname=$opt_m;
+      $ipaddr=gethostbyname($opt_m);
+      if (!defined($ipaddr)){
+         die "Bad address lookup for $opt_m\n";
+      } else {
+         $Address=inet_ntoa($ipaddr);
+         unless(defined($Address)){
+            die "Bad final client address conversion in inet_ntoa for $Address\n";
+         } 
+      } 
+      $opt_m = $Address;
+   }
+
+   $opt_a=1; # don't pre-filter any addresses
+   $opt_p=1; # dump the access report
+   $pageThreshold = 0;
+   print "Filter on hostname '$hostname' [$Address]\n";
+}
+
+
+$logfile = "/var/log/httpd/access_log";
+if (defined($opt_f)) { $logfile = $opt_f; }
+
+open(LOG, "<$logfile") || 
+   die "Cannot open Apache logfile: $logfile\n";
+while (<LOG>){
+   chomp;
+   /^\s*$/ && do { next; };
+   s/\s+/ /go;
+
+   #print "Line: $_\n";
+   #if ($. % 1000 == 0 ) { print ".";}
+   #if ($. % 50000 == 0 ) { print ": $.\n";}
+
+   ($clientAddress,    $rfc1413,      $username, 
+    $localTime,         $httpRequest,  $statusCode, 
+    $bytesSentToClient) =
+    /^(\S+) (\S+) (\S+) \[(.+)\] \"([^\"]+)\" (\S+) (\S+)/o;
+
+   if ($clientAddress =~ /^\d+\.\d+\.\d+\.\d+/){
+      # skip my ip address
+      # Skip ip addresses:
+      #   15.87.25.61  = hpcvifm.cv.hp.com
+      #   15.87.26.124 = lxcvifem.cv.hp.com
+      #   15.87.29.157 = cv-floyd.americas.hpqcorp.net
+      if (!defined($opt_a) && ( $clientAddress =~ /15\.87\.25\.61/ ||
+      $clientAddress =~ /15\.87\.26\.124/ ||
+      $clientAddress =~ /15\.7\.212\.90/ ||
+      $clientAddress =~ /15\.87\.29\.157/ )){ next; }
+
+      if (exists($IPAddrCache{$clientAddress})){
+         $clientName=$IPAddrCache{$clientAddress};
+      } else {
+         if (exists($BadAddr{$clientAddress})){
+            next;
+         }
+         my $ipaddr = inet_aton($clientAddress);
+         my $hostname  = gethostbyaddr($ipaddr, AF_INET);
+         #print "   ... mapped to hostname: $hostname\n";
+         unless(defined($hostname)){
+            #unless (exists($BadAddr{$clientAddress})){
+            #   warn "\n$.:   Could not resolve host ip address $clientAddress\n";
+            #}
+            $BadAddr{$clientAddress}=1;
+            $clientName=$clientAddress;
+            next;
+         } else {
+            if ($hostname =~ /\.dhcp\./){
+               $opt_v && warn "\n$.:   DHCP address... name probably doesn't matter\n";
+               $clientName=$clientAddress;
+            } else {
+               $clientName=$hostname;
+            }
+            unless (exists($IPAddrCache{$clientAddress})){
+               $opt_v && print "\n   Numerical address $clientAddress = $clientName\n";
+            }
+            $IPAddrCache{$clientAddress} = $clientName;
+         }
+     }
+  } else {
+      # skip my ip address
+      if (!defined($opt_a) && ( $clientName =~ /lxcvifem\.cv\.hp\.com/)){ next; }
+
+      $clientName=$clientAddress;
+      if (exists($BadName{$clientName})){ next; }
+
+      my $ipaddr=gethostbyname($clientAddress);
+      if (!defined($ipaddr)){
+         warn "\n$.:   Bad address lookup for $clientName\n";
+         $BadName{$clientName}=1;
+         next;
+      } else {
+         $clientAddress=inet_ntoa($ipaddr);
+         unless(defined($clientAddress)){
+            warn "\n$.:   Bad final client address conversion in inet_ntoa for $
+ipaddr\n";
+         } else {
+            unless (exists($IPAddrCache{$clientAddress})){
+               $opt_v && print "\n   Convert hostname $clientName to numeric add
+ress\n";
+               $IPAddrCache{$clientAddress} = $clientName;
+            }
+         }
+      } 
+   }
+
+   # filter
+   if (defined($opt_m) && $clientAddress !~ $opt_m){ next; }
+
+   # skip my machine
+   if (!defined($opt_a) && $clientName =~ /lxcvifem.cv.hp.com/){ next; }
+
+   if (defined($opt_v)){
+      print "Client Address=$clientName [ $clientAddress ]\n";
+      print "  Request: $httpRequest\n";
+   }
+
+   if (exists($Client{$clientName})){
+      $Client{$clientName}++;
+   } else {
+      $Client{$clientName}=1;
+   }
+
+   #$httpRequest =~ s/^GET\s+// && do {
+   $httpRequest =~ s/^HEAD\s+|^GET\s+// && do {
+      my $page = $httpRequest;
+      $page =~ s/\s+HTTP\/\w+.\w+\s*$//;
+      if (length($page) > 1 ) { $page =~ s/\/$//; }
+      if (exists($PageAccessed{$page})){
+         $PageAccessed{$page}++;
+      } else {
+         $PageAccessed{$page}=1;
+      }
+      #print "request=$httpRequest\n";
+      #exit;
+   }
+
+}
+close (LOG);
+
+if (%Client){
+   print "Site Access report:\n";
+   for my $client (sort keys %Client){
+      print "   $client access the site $Client{$client} times\n";
+   }
+}
+
+if (defined($opt_b) && %BadAddr){
+   print "\nBad Address Report:\n";
+   for my $bad (sort keys %BadAddr){
+      print "   $bad\n";
+   }
+}
+
+if (defined($opt_p) && %PageAccessed){
+   print "\nPage Access report:\n";
+   for my $page (sort keys %PageAccessed){
+      if ($PageAccessed{$page} <= $pageThreshold){ next; }
+      printf " %-50s : %3d\n", $page, $PageAccessed{$page};
+   }
+}
+

@@ -1,0 +1,549 @@
+#!/usr/bin/ksh
+# @(#) $Revision: 2 $
+
+# HP-internal directory lookup ("where") script based on using ldapserver (such
+# as /usr/local/bin/ldapserver).
+#
+# USAGE: <command> [<options>] <surname>[,<givenName>[,]] ...
+#
+# See "usage" below for options, which affect other args.
+#
+# The <command> name is one of several available, based on historical
+# precedent (hard-link this script to any of these names):
+#
+#    phone	# site-local phone numbers; put $PHONESITE and $PHONEPREFIX
+#		  in your environment to override defaults (see below).
+#    phonet	# HP-wide Telnet numbers.
+#    where	# HP-wide email addresses, first available only.
+#    where2	# HP-wide email addresses, long form, both values if available.
+#    loc	# location information.
+#    org	# organization information.
+#    full	# all information deemed worth printing, superset of the above,
+#		  one line per available LDAP attribute except "realname".
+#    raw	# raw LDAP info, all available fields, unformatted; just a way
+#		  to call ldapsearch without knowing how.
+#
+# The chosen <command> name controls which fields are returned and how they are
+# formatted.  All commands except "raw" build a "realname" from the sn,
+# givenName, and preferredgivenname fields.  Set $NAMEWIDTH to a number in your
+# environment to override the "realname" field width.
+#
+# Each <surname> can be partial ("*" wildcard is appended for ldapsearch in
+# case not already present) or complete (comma at end).  Similarly, <givenName>
+# is taken to be incomplete (wildcard is appended) unless followed by a second
+# comma.  Beware cases such as the example below that contains whitespace.
+#
+# NOTE:  Because this is a ksh script, confusion and failure can occur with
+# wildcarding, in particular such as "where 'silverstein, alan j'" when the "j"
+# expands to match one or more filenames.  There's no good fix or workaround
+# other than, in this case, adding "," after "j" to prevent wildcarding.
+#
+# EXAMPLES:
+#
+#   phone   silver
+#   phonet  silverstein,
+#   where   silverstein,a
+#   where2 'silverstein,alan j,'
+#   org	    fiorina
+#   loc	    fiorina
+#   full    fiorina,c
+#
+# NOTE:  I used awk here because I know it better than perl and in my
+# experience it's more portable, but you can rewrite parts of this script in
+# perl if you prefer.  :-)
+
+
+# LDAP ATTRIBUTES SUMMARY:
+#
+# Searching ldap.hp.com with ldapserver -A on 011218, I found the following
+# long list of attributes (longest = 29 letters).  First, list those used here
+# (by command name), then those not used except in raw mode:
+#
+# phone:
+# phonet:
+#   telephoneNumber	# abbreviated to digits after $PHONEPREFIX for phone.
+#
+# where:
+#   preferredmail
+#   mail		# first valid of either.
+#
+# where2:
+#   preferredmail	# listed first.
+#   mail		# listed second.
+#
+# loc:
+#   buildingName
+#   hpFloor
+#   hpPost		# concatenated with previous.
+#   l			# location, verbose.
+#   mailStop
+#
+# org:
+#   departmentnumber
+#   hpOrganizationChartAcronym
+#   ou			# fuller than previous.
+#
+# full:  all of the above, one line per item, neatly formatted, plus the
+#	 following in this order:
+#   cn			# complete name?
+#   hpfullname
+#   givenName
+#   preferredgivenname
+#   employeetype
+#   manager
+#   hpBusinesssector
+#   hpBusinessRegion
+#   hpBusinessorganizationacronym
+#   alternatetelephonenumber
+#   postaladdress
+#   c			# country, short form?
+#   co			# country, long form?
+#   ntuserdomainid
+#   modifytimestamp
+
+# OTHER LDAP ATTRIBUTES found but not deemed interesting enough for "full":
+#
+#   buildingName		# usually part of hpFloor
+#   businesscategory		# often null
+#   createtimestamp		# often null
+#   creatorsname		# often null
+#   hpaccountcode		# part of departmentnumber
+#   hpBusinessorganization	# verbose and not very specific
+#   hpBusinessorganizationcode	# cryptic number
+#   hpBusinessRegioncode	# cryptic short form
+#   hpBusinesssectorcode	# cryptic short form
+#   hpBusinesstypecode		# numeric
+#   hpdepartmentcode		# already part of departmentnumber
+#   hpdistrictcode		# numeric
+#   hpenddate			# usually blank
+#   hpentitycode		# part of departmentnumber
+#   hpexpiredmail		# usually blank
+#   hpicsubaccountcode		# usually blank
+#   hplocalsubaccountcode	# usually blank
+#   hpmrucode			# cryptic
+#   hpOrganizationChartGroup	# verbose
+#   hppayrollcountrycode	# who cares?
+#   hpproductlinecode		# numeric
+#   hprealestateid		# usually blank or cryptic
+#   hpstatus			# usually "Active", even for contractors
+#   hpsubentitycode		# cryptic
+#   hpsubproductlinecode	# numeric
+#   hpterminationdate		# usually blank
+#   hpworkforcecode		# numeric
+#   hpworklocation		# cryptic codes
+#   hpworksegment		# not interesting, "Dedicated workspace"
+#   latitude			# usually blank
+#   longitude			# usually blank
+#   modifiersname		# cryptic, uninteresting
+#   nonhptype			# usually blank
+#   nonhpuniqueid		# usually blank
+#   o				# usually "Hewlett-Packard Company"
+#   objectclass			# several uninteresting values
+#   owner			# usually blank
+#   postalcode			# included in postaladdress
+#   sn				# surname?  search key only
+#   st				# state, included in postaladdress
+#   street			# included in postaladdress
+#   telephoneNumber		# telephone Number (no loger use telnet!)
+#   timezone			# usually blank
+#   timezonename		# usually blank
+#   uid				# apparently internal use only, not of interest
+#   usercertificate		# useless?
+
+
+# INITIALIZE, CHECK INVOCATIOn
+
+	PHONESITE=${PHONESITE:-'Corvallis'}	# for local phone command.
+	AREACODE=${AREACODE:-'541'}	        # local area code.
+	PHONEPREFIX=${PHONEPREFIX:-'71'}	# common to all local phones.
+	NAMEWIDTH=${NAMEWIDTH:-'25'}		# realname field width.
+	MYNAME="$(basename $0)"
+	LDAPHOST='ldap.hp.com'			# where to get data.
+	dump_search_key=0
+
+# Look for filtering option, which affects the search but not the fields
+# retrieved or the formatting:
+#
+# Note:  Assume at most a single option.
+
+	case "x$1" in
+
+	x-g) keyname='givenName';			shift;;
+	x-G) keyname='preferredgivenname';		shift;;
+	x-p) keyname='telephoneNumber';			shift;;
+	x-m) keyname='preferredmail';			shift;;
+	x-M) keyname='mail';				shift;;
+	x-l) keyname='l';				shift;;
+	x-s) keyname='mailStop';			shift;;
+	x-d) keyname='departmentnumber';		shift;;
+	x-a) keyname='hpOrganizationChartAcronym';	shift;;
+	x-o) keyname='ou';				shift;;
+	x-x) dump_search_key=1;                         shift;;
+
+	*)   keyname='';
+	esac
+
+	if [[ $# = 0 ]]		# no args given.
+	then
+	    cat >&2 <<-!
+		Usage: $0 <surname>[,<givenName>[,]] ...
+		       $0 [-g|G|p|m|M|l|s|d|a|o] pattern...
+
+		<surname> alone looks for sn="<surname>*" (leading match)
+		<surname>, looks for sn="<surname>" (exact match)
+		<surname>,<givenName> looks for cn="<surname>,<givenName>*"
+		<surname>,<givenName>, looks for cn="<surname>,<givenName>"
+
+		With an option, each arg is taken as an ldapsearch pattern
+		(such as "phonet -p 898-3053", "where -g alan*",
+		"loc -l *ollins*") against one specified attribute:
+
+		         -g givenName
+		         -G preferredgivenname (slow)
+		(phonet) -p telephoneNumber
+		(where)  -m preferredmail (slow)
+		(where2) -M mail
+		(loc)    -l l(ocation)
+		(loc)    -s mailStop (slow)
+		(org)    -d departmentnumber
+		(org)    -a hpOrganizationChartAcronym (slow)
+		(org)    -o ou
+
+		Some options make the most sense with the corresponding
+		command name listed above, but this is not required.
+		!
+	    exit 1
+	fi
+
+# $pre_attrs are LDAP attributes almost always requested first by the various
+# commands:
+
+	pre_attrs='sn givenName preferredgivenname'
+
+# Set additional command-specific attributes:
+
+	case "x$MYNAME" in
+
+	xphone)	attrs='l telephoneNumber'				;;
+	xphonet)attrs='telephoneNumber'					;;
+	xwhere)	attrs='preferredmail mail'				;;
+	xwhere2)attrs='preferredmail mail'				;;
+	xloc)	attrs='buildingName hpFloor hpPost l mailStop'		;;
+	xorg)	attrs='departmentnumber hpOrganizationChartAcronym ou'	;;
+
+	xfull)	attrs='telephoneNumber'
+		attrs="$attrs preferredmail mail"
+		attrs="$attrs buildingName hpFloor hpPost l mailStop"
+		attrs="$attrs departmentnumber hpOrganizationChartAcronym ou"
+
+		attrs="$attrs cn hpfullname givenName preferredgivenName"
+		attrs="$attrs employeetype manager hpBusinesssector"
+		attrs="$attrs hpBusinessRegion hpBusinessorganizationacronym"
+		attrs="$attrs alternatetelephonenumber postaladdress c co"
+		attrs="$attrs ntuserdomainid modifytimestamp"		;;
+
+	xraw)	pre_attrs=''	# no special cases.
+		attrs=''	# no list at all => get everything.
+		;;
+
+	*)	echo >&2 "Unrecognized command name \"$0\"; basename must be" \
+			 "one of:" \
+			 "phone, phonet, where, where2, loc, org, full, raw"
+		exit 1
+	esac
+
+
+# FUNCTION:  PARSE NAME INTO LDAP SEARCH KEY:
+#
+# Treat each command arg (passed as $1 to ParseName()) as
+# "<surname>[,<givenName>[,]]", where both parts can contain whitespace.  Based
+# on commas, decide how to do the lookup, using either "sn" only, with or
+# without appending a wildcard ("*"), or "cn" consisting of "<givenName>
+# <surname>", optionally with a wildcard after <givenName>.  See script usage
+# comments.
+
+ParseName() {
+
+	awk < /dev/null 'END {
+
+	    name = "'"$1"'";
+
+	    if ((comma1 = index(name, ",")) == 0)	# no comma:
+	    {
+		print "sn=\"" name "*\"";	# sn="surname*"
+	    }
+	    else if (comma2 = index(substr(name, comma1 + 1), ","))
+	    {						# have second comma:
+		print "cn=\"" \
+		      substr(name, comma1 + 1, comma2 - 1), \
+		      substr(name, 1, comma1 - 1) \
+		      "\"";			# cn="givenName surname"
+	    }
+	    else if (comma1 < length(name))		# single comma + more:
+	    {
+		print "cn=\"" \
+		      substr(name, comma1 + 1) "*", \
+		      substr(name, 1, comma1 - 1) \
+		      "\"";			# cn="givenName* surname"
+	    }
+	    else					# single comma at end:
+	    {
+		print "sn=\"" \
+		      substr(name, 1, comma1 - 1) \
+		      "\"";			# sn="surname"
+	    }
+	}'
+
+} # ParseName()
+
+
+# GET AND FORMAT LDAP DATA:
+#
+# Note:  $name and $key can contain whitespace, beware.
+
+	unset notfirst			# set after first arg processed.
+
+	for name in "$@"
+	do
+	    if [[ -z "$notfirst" ]]
+	    then notfirst='true'
+	    else echo			# blank line after previous output.
+	    fi
+
+	    if [[ -z "$keyname" ]]	# default usage
+	    then key=$(ParseName "$name")
+	    else key="$keyname=\"$name\""
+	    fi
+
+# Note:  Adding "-S hpfullname" only slows down ldapsearch and doesn't seem to
+# produce desired sort order, so sort locally later.
+
+            if [[ $dump_search_key -eq 1 ]]
+            then echo "ldapsearch -x -h $LDAPHOST -b o=hp.com $key $pre_attrs $attrs"
+            fi
+
+	    {
+		eval ldapsearch -x -h $LDAPHOST -b o=hp.com $key $pre_attrs $attrs
+		echo			# sentinel line for below.
+	    } |
+
+# Format output according to command name:
+
+	    case "$MYNAME" in
+
+# Note:  Ideally "phone" would use a compound filter like
+# "&(sn=silverstein)(l=Fort Collins)" (assuming I read RFC 1558 correctly), but
+# this actually slows down ldap.hp.com remarkably, so instead pull more data
+# using the name only, and then filter it locally (see $PHONESITE below):
+
+	    phone)
+
+		awk '
+		#{printf("%s\n", $0 );}
+
+		/^dn: / {		# start of record:
+		    sn = gn = pn = tn = ".";
+		    printit = 0;
+		    next;
+		}
+
+		/^l: Corvallis/	{ printit = 1; next }
+		/^sn:/		{ sn = substr($0, 4); next }
+		/^givenName:/		{ gn = substr($0,11); next }
+		/^preferredgivenname:/	{ pn = substr($0,20); next }
+		/^telephoneNumber:/	{ tn = substr($0,17); next }
+
+		/^$/ {
+		    if (! printit) next;	# not a local number.
+
+		    if ((gn != pn) && (pn != ".")) gn = gn " (" pn ")";
+                    ttn = substr(tn,4);
+                    tn=ttn;
+		    sub("^'$AREACODE' '$PHONEPREFIX'", "", tn);	# delete prefix if any.
+                    sub(" ","",tn);
+
+		    printf("%-'"$NAMEWIDTH"'s  %s\n", sn ", " gn, tn);
+                    printit=0;
+		}' | sort -f
+		;;
+
+# Similar to phone but simpler, no filtering required:
+
+	    phonet)
+
+		awk '
+                #{ print " ... ",$0 }
+		/^dn: uid=/ { 
+                   sn = gn = pn = tn = "."; 
+		   printit = 1;
+                   next 
+                }
+
+		/^sn: /			{ 
+                   sn = substr($0, 4); 
+                   next 
+                }
+		/^givenName: /		{ gn = substr($0,11); next }
+		/^preferredgivenname: /	{ pn = substr($0,20); next }
+		/^telephoneNumber: /	{ tn = substr($0,17); next }
+
+		/^$/ {
+		    if (! printit) next;
+		    printit = 0;
+		    if (! sn) next;	# nothing found.
+		    if ((gn != pn) && (pn != ".")) gn = gn " (" pn ")";
+		    printf("%-'"$NAMEWIDTH"'s  %s\n", sn ", " gn, tn);
+		}'
+		#}' | sort -f
+		;;
+
+# Like phonet but different data fields:
+
+	    where | where2)
+
+		awk '
+
+		/^dn: uid=/ { 
+                   sn = gn = pn = pm = em = "."; 
+		   printit = 1;
+                   next 
+                }
+
+		/^sn: /			{ sn = substr($0, 4); next }
+		/^givenName: /		{ gn = substr($0,11); next }
+		/^preferredgivenname: /	{ pn = substr($0,20); next }
+		/^preferredmail: /	{ pm = substr($0,15); next }
+		/^mail: / { 
+                    if (em == "."){
+                       em = substr($0, 6); 
+                    }
+                    next 
+                }
+
+		/^$/ {
+		    if (! sn) next;	# nothing found.
+		    if (! printit) next;
+		    printit = 0;
+
+		    if ((gn != pn) && (pn != ".")) gn = gn " (" pn ")";
+
+		    if (pm == ".") pm = em;
+		    else if (("'"$MYNAME"'" == "where2") \
+			  && (pm != em) && (em != "."))	pm = pm ", " em;
+
+		    printf("%-'"$NAMEWIDTH"'s  %s\n", sn ", " gn, pm);
+                    next;
+		}'
+		;;
+
+# Like phonet but different data fields:
+
+	    loc)
+		awk '
+
+		/^dn: uid=/ { 
+                   sn = gn = pn = fl = po = lo = ms = bn = "."; 
+                   printit=1;
+                   next 
+                }
+
+		/^sn: /			{ sn = substr($0, 4); next }
+		/^givenName: /		{ gn = substr($0,11); next }
+		/^preferredgivenname: /	{ pn = substr($0,20); next }
+		/^buildingName: /	{ bn = substr($0, 9); next }
+		/^hpFloor: /		{ fl = substr($0, 9); next }
+		/^hpPost: /		{ po = substr($0, 8); next }
+		/^l: /			{ lo = substr($0, 3); next }
+		/^mailStop: /		{ ms = substr($0,10); next }
+
+		/^$/ {
+		    if (! sn) next;	# nothing found.
+		    if (! printit) next;
+		    printit = 0;
+		    if ((gn != pn) && (pn != ".")) gn = gn " (" pn ")";
+
+		    printf("%-'"$NAMEWIDTH"'s  %-8s  %s  %s\n", sn ", " gn, \
+			   bn fl po, lo, ms);
+		}' | sort -f
+		;;
+
+# Like phonet but different data fields:
+
+	    org)
+		awk '
+
+		/^dn: uid=/ { 
+                   sn = gn = pn = fl = po = lo = ms = "."; 
+                   printit=1;
+                   next 
+                }
+
+		/^sn: /				{ sn = substr($0, 4); next }
+		/^givenName: /			{ gn = substr($0,11); next }
+		/^preferredgivenname: /		{ pn = substr($0,20); next }
+		/^departmentnumber: /		{ dn = substr($0,18); next }
+		/^hpOrganizationChartAcronym: /	{ oc = substr($0,28); next }
+		/^ou=/				{ ou = substr($0, 4); next }
+
+		/^$/ {
+		    if (! sn) next;	# nothing found.
+		    if (! printit) next;
+		    printit = 0;
+		    if ((gn != pn) && (pn != ".")) gn = gn " (" pn ")";
+
+		    printf("%-'"$NAMEWIDTH"'s  %-9s  %-4s  %s\n", sn ", " gn, \
+			   dn, oc, ou);
+		}' | sort -f
+		;;
+
+# Translate the "realname" as usual, and make the rest of the data a bit easier
+# to read, one line per item:
+
+	    full)
+		awk '
+
+		/^dn: uid=/ { 
+                   sn = gn = pn = "."; 
+                   items = 0; 
+                   printit=1;
+                   next 
+                }
+
+		/^sn: /				{ sn = substr($0, 4); next }
+		/^givenName: /			{ gn = substr($0,11); next }
+		/^preferredgivenname: /		{ pn = substr($0,20); next }
+
+		{
+		    if ((pos = index($0, "=")) == 0)	# no "=" sign:
+		    {
+			name [++items] = $0;
+			value[  items] = "";
+		    }
+		    else
+		    {
+			name [++items] = substr($0, 1, pos - 1);
+			value[  items] = substr($0, pos + 1);
+		    }
+		}
+
+		/^$/ {
+		    if (! sn) next;	# nothing found.
+		    if (! printit) next;
+		    printit = 0;
+		    if ((gn != pn) && (pn != ".")) gn = gn " (" pn ")";
+
+		    print sn ", " gn;
+
+		    for (item = 1; item <= items; ++item)
+			printf("%-'"$NAMEWIDTH"'s  %s\n", \
+				name[item], value[item]);
+		}'
+		;;
+
+# Raw => just pass it through:
+
+	    *) cat ;;
+
+	    esac
+	done
+

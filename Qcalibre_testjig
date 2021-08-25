@@ -1,0 +1,13 @@
+#!/bin/sh
+# drc
+#/sdg/bin/Qcalibre -drc -hier -nowait /com0/dtig/cd40_testing/im1a_scratch/design/route/_tij4_drc_
+# lvs
+#/sdg/bin/Qcalibre -spice lay.net -lvs -hier -automatch -nowait /com0/dtig/cd40_testing/im1a_scratch/design/route/_cd40rules_
+
+#cd /com/red/sfx2_lvs
+#/sdg/bin/Qcalibre -spice full_array.lay.net -hcell hcells_lvs -nowait /com/red/sfx2_lvs/_sfx2_lvs_dg_
+
+cd /com/red/composite
+echo "/sdg/bin/Qcalibre -drc -cb -nowait _tij4_drc_"
+/sdg/bin/Qcalibre -drc -cb -nowait _tij4_drc_
+

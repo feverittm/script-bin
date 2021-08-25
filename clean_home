@@ -1,0 +1,9 @@
+set -u
+cd /home/red
+find . -name core -exec rm {} \;
+find . -name *~ -exec rm {} \;
+find . -name *.bak -exec rm {} \;
+find . -name ninstall.log.out -exec rm {} \;
+find . -name ninstall.log -exec rm {} \;
+find . -name gmon.out -exec rm {} \;
+find . -name debug.out -exec rm {} \;

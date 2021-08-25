@@ -1,0 +1,265 @@
+#!/usr/bin/perl -w
+#
+
+use strict;
+use English;
+use Tk;
+use Tk::Xrm;
+use Tk::DialogBox;
+use Date::Manip;
+use Config::IniFiles;
+use subs qw(handler show_usage update cleanup_and_die);
+use subs qw(file_menuitems help_menuitems);
+use POSIX qw(strftime);
+
+use vars qw($opt_t $opt_v $opt_u $opt_x);
+use Getopt::Std;
+
+#-------------------------------------------------------------------
+# General Variables and runtime information.
+#-------------------------------------------------------------------
+
+use vars qw($rc $update_time $message $message_fmt  $Rev $RunDate $DirName);
+use vars qw($ProgName $DefSection);
+use vars qw($now $target $delta);
+
+my $FONT = '-*-Helvetica-Medium-R-Normal--*-140-*-*-*-*-*-*';
+$message_fmt = "There are XX days until we leave on vacation!";
+$now         = ParseDate("today");
+$target      = $now;
+
+#Widgets
+use vars qw($main $top $textbox $header $w_update $w_quit $listbox);
+
+$RunDate = strftime '%Y/%m/%d %H:%M:%S', localtime;
+$Rev = ( split( ' ', '$Revision: 2 $', 3 ) )[1];
+$0 =~ m!(.*)/!;
+$ProgName = $';
+$DirName  = $1;
+$DirName  = '.' unless $DirName;
+
+#--------------------------------------------------------------
+# General utility subroutines
+#--------------------------------------------------------------
+sub show_usage {
+    print "$ProgName:\n";
+    print "   Options:\n";
+    print "   -u <update>  :  Update time in seconds (default is 1 sec).\n";
+    print "   -x           :  Verbose degug information.\n";
+    print "   -t           :  Text mode, just report the countdown time.\n";
+    print "\n";
+    print "$ProgName  $Rev\t\t$RunDate\n\n";
+    print "  In the window inputing:\n";
+    print "  Control-C  :  Exits the program.\n";
+    print "\n";
+    exit 0;
+}
+
+sub cleanup_and_die {
+    my $msg = $_[0];
+    die "$msg";
+}
+
+sub update {
+
+    # Update the counter every 1 second.
+    #print &UnixDate("today","It is now %T on %b %e, %Y.");
+    #        =>  "It is now 13:24:08 on Feb  3, 1996."
+    $now = ParseDate("today");
+    $delta = DateCalc( $now, $target );
+
+ #print "Now=$now, Target=$target, Delta=$delta\n";
+ #my $datestr = Delta_Format($delta, 1, "Delta is %dh days, and %hd hours\n");
+ #my $datestr = Delta_Format($delta, 1, "Delta is %dt days\n");
+ #print "$datestr\n";
+
+    # load date into message...
+    $message = Delta_Format( $delta, 3, $message_fmt );
+
+    $opt_v && print "Update...  message='$message'\n";
+
+    if ( defined($top) ) {
+        $top->after( $update_time, \&update );
+    }
+}
+
+sub file_menuitems {
+
+    # Create the menu items for the File menu.
+
+    my ( $motif, $bisque ) = ( 1, 0 );
+    my $new_image_format = 'png';
+
+    [   [qw/cascade ~New   -accelerator Ctrl-n/],
+        [qw/command ~Open  -accelerator Ctrl-o/],
+        [qw/command ~Save  -accelerator Ctrl-s/],
+        '',
+        [qw/command ~Options -accelerator Ctrl-i/],
+        '',
+        [ qw/command ~Update -accelerator Ctrl-u -command/ => \&update ],
+        [ qw/command ~Quit  -accelerator Ctrl-q -command/  => \&exit ],
+    ];
+
+}    # end file_menuitems
+
+sub help_menuitems {
+    [   [ 'command', 'Version', -command => sub { print "Version\n" } ],
+        '',
+        [ 'command', 'About', -command => sub { print "About\n" } ],
+    ];
+}
+
+sub LoadRC {
+
+    # read and load config file
+    my $cfg_file = "$ENV{HOME}/." . $ProgName . "rc";
+    $opt_v && print " ... checking for config file at \$HOME: $cfg_file\n";
+    if ( -f "$cfg_file" ) {
+        $rc = new Config::IniFiles( -file => $cfg_file );
+    }
+    else {
+        $cfg_file = "$ENV{HOME}/bin/" . $ProgName . ".rc";
+        $opt_v && print " ... checking for config file in cwd: $cfg_file\n";
+        if ( -f "$cfg_file" ) {
+            $rc = new Config::IniFiles( -file => $cfg_file );
+        }
+        else {
+            $cfg_file = $ProgName . ".rc";
+            $opt_v
+                && print " ... checking for config file in cwd: $cfg_file\n";
+            if ( -f "$cfg_file" ) {
+                $rc = new Config::IniFiles( -file => $cfg_file );
+            }
+            else {
+                print "Cannot find ini file $cfg_file to load\n";
+            }
+        }
+    }
+
+    if ( defined($rc) ) {
+        use vars qw ($rc_update $rc_message $rc_date);
+
+        my @Sections = $rc->Sections;
+        $opt_v
+            && print "The defined sections are: "
+            . join( " ", @Sections ) . "\n";
+        for my $sect (@Sections) {
+            if ( !defined($DefSection) ) {
+                $DefSection = $sect;
+                $opt_v
+                    && print " ... $sect set as the default\n";
+            }
+            my @parms = $rc->Parameters($sect);
+            $opt_v
+                && print "   ... the parameters are: "
+                . join( " ", @parms ) . "\n";
+        }
+
+        if ( defined( $rc_update = $rc->val( $DefSection, 'update' ) ) ) {
+            $update_time = $rc_update;
+            $opt_v
+                && print "update set from ini file: $update_time\n";
+        }
+
+        if ( defined( $rc_message = $rc->val( $DefSection, 'message' ) ) ) {
+            $message_fmt = $rc_message;
+            $message_fmt =~ s/"//g;
+            $opt_v
+                && print "message format set from ini file: $message_fmt\n";
+        }
+
+        if ( defined( $rc_date = $rc->val( $DefSection, 'date' ) ) ) {
+            $opt_v
+                && print
+                "   ... parsing of target date from file: $rc_date\n";
+            $rc_date =~ s/"//g;
+            $target = ParseDateString($rc_date);
+            if ( !defined($target) ) {
+                die "Bad parsing of target date from file: $rc_date\n";
+            }
+            $opt_v
+                && print "Target date set from ini file: $target\n";
+        }
+    }
+}
+
+sub SetFont {
+}
+
+#----------------------------------------------------------------------------------
+#
+#  Main program
+#
+
+#
+# parse options...
+#
+my @SAVEDARGV = @ARGV;
+if ( &getopts('tvxu:') == 0 ) {
+    &show_usage;
+}
+
+#print "# $ProgName  $Rev\t\t$RunDate\n\n";
+
+$update_time = 1000;
+LoadRC();
+
+if ( defined($opt_u) ) {
+    if ( $opt_u !~ /\d+/ ) {
+        die "Invalid number specified for the update time: $opt_u\n";
+    }
+    $update_time = int( $opt_u * 1000 );
+}
+
+if ( $update_time == 0 ) {
+    print "Bad update time conversion\n";
+}
+elsif ( $update_time < 100 ) {
+    print "Setting update time to minimum of 0.1 seconds\n";
+    $update_time = 100;
+}
+
+unless ( defined($opt_t) ) {
+    $top = MainWindow->new;
+    $top->bind( '<Control-c>' => \&exit );
+    $top->bind( '<Control-u>' => \&update );
+    $top->title('TkCount');
+    $top->iconname('TkCount');
+
+    $top->geometry('700x50');
+    $top->focus;
+
+    # Create the menubar.
+
+    my $menubar = $top->Frame(qw/-relief raised -borderwidth 2/);
+    $menubar->pack(qw/-fill x/);
+
+    # Create the menubar's menubuttons.
+
+    my $file = $menubar->Menubutton( qw/-text File -underline 0/,
+        -menuitems => file_menuitems );
+    my $help = $menubar->Menubutton( qw/-text Help -underline 0/,
+        -menuitems => help_menuitems );
+
+    # In Unix the Help menubutton is right justified.
+    $file->pack(qw/-side left/);
+    $help->pack(qw/-side right/);
+
+    # Define the countdown message
+
+    $textbox = $top->Label( -textvariable => \$message )->pack(
+        -side => 'bottom',
+        -fill => 'y'
+    );
+
+    $textbox->configure( -font => [qw/arial 18 medium/] );
+}
+
+&update;
+
+if ( defined($opt_t) ) {
+    print "$message\n";
+}
+else {
+    MainLoop;
+}

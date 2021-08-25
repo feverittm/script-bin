@@ -1,0 +1,8 @@
+#!/usr/bin/perl
+sub get_dir # Fast get_dir
+{
+    my($B) = shift;
+    return (map {"$_/$B"} grep { -f "$_/$B" } split(/:/,$ENV{'PATH'}))[0];
+}
+
+print get_dir($ARGV[0]) . "\n";

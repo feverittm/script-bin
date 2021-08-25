@@ -1,0 +1,43 @@
+#!/usr/local/bin/perl
+$file=shift;
+if (length($file)==0){
+   open(FL,"</users/red/.appts") || die "Cannot open the .appts file\n";
+   }
+else {
+   open(FL,"<$file") || die "Cannot open the $file file\n";
+   }
+
+$state=0;
+undef($major_class);
+while (<FL>){
+   chop;
+   #print "Line: $_\n";
+   s/^==// && do {$major_class=$_;next;};
+   ++$state;
+   if ($state == 1){
+      s/\n/ /;
+      tr/"/'/;
+      $title.=$_;
+      $endchar=substr($title,-1,1);
+      if ($endchar ne "'"){ $title.=" ";--$state; }
+      #print "$state,'$endchar':$title\n";
+      }
+   if ($state == 2){
+      s/^=//;
+      $class=$_ unless(defined($major_class));
+      if(defined($major_class)){
+            $class=$major_class;
+	    ++$state;
+	 }
+      }
+   if ($state == 3){
+      $time=$_;
+      }
+   if ($state == 4){
+      print "$title:$class:$time\n";
+      $state=0;
+      $title="";
+      $class="";
+      $time="";
+      }
+}

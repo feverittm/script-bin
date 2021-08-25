@@ -1,0 +1,364 @@
+#!/usr/bin/env perl5
+# 
+#       Author:  Floyd Moore (redfc.hp.com) 
+#	$Header: gdsinfo,v 1.1 2003/01/17 13:27:00 red Exp $ 
+#	Description:
+#         Update to the original "gdsinfo" script used by the DTIG
+#       for getting information (layers, revision, cell names, etc)
+#       from a gds file.  Original file by Paul Liebert.
+#
+#	"gdsinfoscript_name" created by red
+#
+#
+
+package gds_info;
+
+# program is designed to have the same output formatting and look
+# as the original script.
+
+use strict;
+use warnings;
+use subs qw(handler show_usage parse_options);
+use POSIX qw(strftime);
+use vars qw($icp $opt_e $opt_l $opt_v $opt_t $opt_x $opt_V);
+use vars qw($ProgName $RunDate $Rev $DirName);
+use vars qw($CellModTime $GdsVersion $GdsLib $GdsUnits $GdsModTime);
+use vars qw($CellName %Cells %Layers %Text %Map);
+use vars qw($InText $InStr $InElement);
+use vars qw($Layer $Type);
+use Data::Dumper;
+
+$RunDate = strftime '%Y/%m/%d %H:%M:%S', localtime;
+$Rev = (split(' ', '$Revision: 2 $', 3))[1];
+$0 =~ m!(.*)/!; $ProgName = $'; $DirName = $1; $DirName = '.' unless $DirName;
+
+use Getopt::Std;
+
+sub show_usage
+{
+   print "$ProgName  $Rev\t\t$RunDate\n";
+   print "$ProgName [-xVvlt]\n";
+   print "   Options:\n";
+   print "   -v:        Verbose mode, show datatype as well as layer info\n";
+   print "   -V:        Report Version and quit.\n";
+   print "   -x:        Debug mode\n";
+   print "   -l <layer_file> read a layer naming file\n";
+   print "   -e <extension>  Look for all files with this extension\n";
+   print "\n";
+   exit 0;
+}
+
+# my options parser
+sub parse_options
+{
+   if ( $#ARGV > 0 && $ARGV[0] =~ "-help"){
+	&show_usage();
+	exit(1);
+   }
+
+   unless (&Getopt::Std::getopts('Vvxtl:e:')) {
+	&show_usage();
+	exit(1);
+   }
+   if ($opt_V) { die "$ProgName $Rev\n"; };
+
+   unless (defined($ARGV[0]) || defined($opt_e)) {
+      die "You need to specify a gds file\n";
+   }
+
+   # need extended info if requesting layer mapping
+   if (defined($opt_l)){ $opt_v = 1; }
+
+   # need extended info if requesting the table data
+   if (defined($opt_t)){ $opt_v = 1; }
+}
+
+#############
+# Sample output from the original script
+# Ran as: /usr/contrib/mentor/gdsinfo MUX81X4.gds
+#
+# GDS Version Number:  5 
+# GDS Library Name:  CORELIB.DB
+# GDS Database Units:  0.001 user/db,  1E-09 meters/db,  user=1E-06 meters
+# GDS File Last Modified:   06/06/101 10:00:49 
+#
+# Layers used in MUX81X4.gds are:
+#     0
+#     1
+#     13
+#     17
+#     19
+#     2
+#     23
+#     38
+#     63
+#
+# Cells in MUX81X4.gds are:
+#     MUX81X4
+#
+
+sub ProcessGds {
+   my $GdsFile=shift;
+   if (defined($opt_e)){
+      print "Processing GDS file: '$GdsFile'\n";
+   }
+   unless ( -r $GdsFile ){
+      die "Cannot open the specified gds file for reading.\n";
+   }
+
+   open (GDSASC, "/sdg/bin/gds2asc $GdsFile |") ||
+      die "Cannot open a pipe to read output from gds2asc\n";
+
+   while(<GDSASC>){
+      chomp;
+
+      #  Stuff in the main GDS Header...
+
+      s/^HEADER\s+// && do {
+         s/\{[^\}]+\}//g;
+         s/\s+;$//;
+         s/^\s+//;
+         $GdsVersion = $_;
+         next;
+      };
+      
+      s/^\s+//;
+
+      s/^LIBNAME\s+// && do {
+         s/\{[^\}]+\}//g;
+         s/\s+;$//;
+         s/^\s+//;
+         s/\"//g;
+
+         $GdsLib = $_;
+         next;
+      };
+
+      s/^UNITS\s+// && do {
+         s/\{[^\}]+\}//;
+         s/[\{\}]//g;
+         s/\s*;\s*$//;
+         s/^\s+//;
+         s/db /db,  /g;
+
+         $GdsUnits = $_;
+         next;
+      };
+
+      /Last modification M\/D\/Y/ && do {
+         s/\{[^\}]+\}//g;
+         s/^\s+//;
+         s/\s+;$//;
+
+         if (defined($InStr)){
+            # Capture the cells modification time...
+            $CellModTime = $_;
+         } else {
+            # Capture the main gds modification time here...
+            $GdsModTime = $_;
+         }
+         next;
+      };
+
+      /^BGNSTR/ && do {
+         $InStr = 1;
+         next;
+      };
+
+      /^ENDSTR/ && do {
+         undef $CellModTime;
+         undef $InStr;
+         undef $InText;
+         undef $Layer;
+         undef $Type;
+         next;
+      };
+
+      #  Stuff in structures...
+      if (defined($InStr)){
+
+         s/\{[^\}]+\}//g;
+         s/\s+;$//;
+         s/^\s+//;
+
+         s/^STRNAME// && do {
+            s/\"//g;
+            s/^\s*//;
+
+            unless(defined($CellModTime)){
+               die "Cell mod time not defined when cell name found.\n";
+            }
+
+            $CellName = $_;
+            $InElement = 1;
+            $Cells{$CellName}->{ModTime}=$CellModTime;
+         };
+
+         /^ENDEL/ && do {
+            undef $InElement;
+            undef $Layer;
+            next;
+         };
+
+         s/^LAYER// && do {
+            #LAYER {8 @ 0x71}  23 {Layer};
+            $opt_x && print "Layer: $_\n";
+            $Layer=$_;
+         };
+
+         s/^(TEXT|DATA)TYPE// && do {
+            my $field=$1;
+            $field =~ s/TYPE//;
+            my $ref;
+            unless(defined($Layer)){
+               die "Structure layer not defined when $field found.\n";
+            }
+            $Type=$_;
+            $opt_x && printf "Text Type: %02d/%02d\n", $Layer,$Type;
+
+            if ($field =~ /TEXT/){
+               $InText=1;
+            }
+
+            if ($Type != 0){
+               $ref=sprintf "%2d/%02d", $Layer,$Type;
+            } else {
+               $ref=sprintf "%2d", $Layer;
+            }
+            if (exists($Cells{$CellName}->{Layers}->{$ref})){
+               $Cells{$CellName}->{Layers}->{$ref}++;
+            } else {
+               $Cells{$CellName}->{Layers}->{$ref}=1;
+            }
+
+            unless(defined($opt_v)){
+               # compatibility mode with /usr/contrib/mentor/gdsinfo
+               $ref=sprintf "%2d", $Layer;
+            }
+
+            if (exists($Layers{$ref})){
+               $Layers{$ref}++;
+            } else {
+               $Layers{$ref}=1;
+            }
+         };
+
+         if (defined($InText) && s/STRING\s+//){
+            s/\"//g;
+            s/\s*$//;
+            if (defined($opt_x)){
+               printf "Text on %2d/%02d = %s\n", $Layer, $Type, $_;
+            }
+         }
+      }
+   }
+   close GDSASC;
+}
+
+sub ReadLayerMap {
+   use vars qw(@fields $layer $drawtype $gdslayer $datatype $ref);
+   open (MAP, "<$opt_l") || die "Cannot open layer map file\n";
+   while (<MAP>){
+      chomp;
+      /^\s*\#/ && do { next; };
+      /^\s*$/ && do { next; };
+
+      s/^\s+//;
+      s/\s+$//;
+      s/\s+/ /g;
+
+      #wellhvimp       drawing         8               0
+      @fields = split(/ /);
+      #print "Number of fields = $#fields, Second field = $fields[1]\n";
+      if ($#fields == 1 && $fields[1] =~ /\d+/){
+         $layer = $fields[0];
+         $gdslayer = $fields[1];
+         # new format for CD40 - Just the Layer name follwed by the number.
+         $ref=sprintf "%2d", $gdslayer;
+         #print " ... new format: ref=$ref\n";
+      } else {
+         ($layer, $drawtype, $gdslayer, $datatype) = @fields;
+         if ($gdslayer > 63 || $gdslayer < 0 || $datatype < 0 || $datatype > 63){
+            die "GDS type out of range in map file line $.: $_\n";
+         }
+         if ($datatype ne "00") {
+            $ref=sprintf "%2d/%02d", $gdslayer,$datatype;
+         } else {
+            $ref=sprintf "%2d", $gdslayer;
+         }
+      }
+
+      $Map{$ref} = "$layer";
+   }
+}
+
+######################################
+#  Main Program	 #####################
+######################################
+
+my @Files;
+
+parse_options;
+$opt_x && print "# $ProgName  $Rev\t\t$RunDate\n\n";
+
+if (defined($opt_e)){
+    if (!opendir(DIR,".")) {
+        warn "Error: could not get a directory listing for .\n";
+        return 0;
+    }
+    my $dir = '';
+    while (defined($dir = readdir(DIR))) {
+       $dir =~ /^\.+/ && do { next; };
+       if ($dir =~ /$opt_e$/){
+          push @Files, $dir;
+       }
+    }
+} else {
+  push @Files, $ARGV[0];
+}
+
+if (defined($opt_l)){
+   ReadLayerMap();
+}
+
+for my $Filename (sort @Files){
+   ProcessGds($Filename);
+}
+
+# Print out the results...
+print "\n";
+print " GDS Version Number:  $GdsVersion\n";
+print " GDS Library Name:  $GdsLib\n";
+print " GDS Database Units:  $GdsUnits\n";
+print " GDS File Last Modified:   $GdsModTime\n";
+print "\n";
+
+print " Layers used are:\n";
+for my $layer (sort keys %Layers){
+   if (defined($opt_v)){
+      if (defined($opt_l)){
+         if (exists($Map{$layer})){
+            print "  Layer $layer, $Map{$layer} = $Layers{$layer} structures\n";
+         } else {
+            print "     $layer = $Layers{$layer} structures\n";
+         }
+      } else {
+         print "     $layer  = $Layers{$layer} structures\n";
+      }
+   } else {
+      print "     $layer\n";
+   }
+}
+print "\n";
+
+unless (defined($opt_t)){
+   print " Cells defined are:\n";
+   for my $cell (sort keys %Cells){
+      print "   $cell\n";
+   }
+} else {
+   print "Dump the internal cell data structure:\n";
+
+   local $Data::Dumper::Indent=1;
+   print Data::Dumper->Dump([\%Cells],["*Cells"]);
+}

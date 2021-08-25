@@ -1,0 +1,101 @@
+#!/usr/local/bin/perl5 -w
+use strict;
+use Time::Local;
+use vars qw($opt_v $opt_f $opt_s $opt_d $msg $in_body $in_header);
+use vars qw($mailtime $header $match);
+use Getopt::Std;
+
+unless (&Getopt::Std::getopts('vf:s:d:')) {
+      die "Bad options\n";
+}
+
+$msg=0;
+undef($in_body);
+undef($in_header);
+undef($match);
+
+my %Months = (
+   "Jan" => 0,
+   "Feb" => 1,
+   "Mar" => 2,
+   "Apr" => 3,
+   "May" => 4,
+   "Jun" => 5,
+   "Jul" => 6,
+   "Aug" => 7,
+   "Sep" => 8,
+   "Oct" => 9,
+   "Nov" => 10,
+   "Dec" => 11,
+);
+
+my $in_space=1;
+my $in_body=1;
+
+while(<>){
+   if (defined($in_space) && defined($in_body) && /^From\s+/){
+      $in_header=1;
+      $opt_v && print "Message $msg starting line $.\n";
+      undef($header);
+      undef($in_body);
+      undef($match);
+      ++$msg;
+   }
+
+   if (/^\s*$/){
+      $in_space=1;
+   } else {
+      undef $in_space;
+   }
+
+   if (defined($in_header)) {
+      $header .= $_;
+
+      # Sender
+      if (defined($opt_s)){
+         s/^Sender:\s+// && do {
+            #print "Sender = $_\n";
+            if ($_ =~ /$opt_s/){
+                #print "Match sender = $_\n";
+                $match=1;
+            }
+         };
+      }
+
+      # From:
+      if (defined($opt_f)){
+         s/^From:\s+// && do {
+            #print "From = $_\n";
+            if ($_ =~ /$opt_f/){
+                #print "Match from = $_\n";
+                $match=1;
+            }
+         };
+      }
+
+      # Date
+      #Date: Wed, 1 Mar 2000 09:03:09 -0700
+      if (defined($opt_d) && $_ =~ /^Date:\s*/){
+          s/^Date:\s*//;
+          my ($dummy, $mday, $mon, $year,$time,$rest);
+          my ($hours, $min, $sec);
+          ($dummy, $mday, $mon, $year,$time,$rest)=split(/ /);
+          if (exists($Months{$mon})) { $mon=$Months{$mon}; }
+          ($hours, $min,$sec)=split(/:/,$time);
+          $mailtime=timelocal($sec, $min, $hours, $mday, $mon, $year);
+          #print "Mail Message arrived at $mailtime\n";
+      }
+   }
+
+   if (defined($in_header) && /^\s*$/) {
+      undef $in_header;
+      $in_body=1;
+      if (defined($match)){ 
+         print "$header"; 
+      }
+   };
+
+   if (defined($in_body) && defined($match)){
+      print $_;
+   }
+}

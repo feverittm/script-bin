@@ -1,0 +1,240 @@
+#!/usr/local/bin/perl5 -w
+#
+#	$Header$
+#
+#	"drc_summary" created by cudatr
+#
+#	$Log$
+
+use strict;
+use subs qw(handler show_usage);
+use POSIX qw(strftime);
+use vars qw($opt_o $opt_s $opt_f $opt_p $opt_v $opt_x);
+use vars qw(%Error);
+
+my ($Rev, $RunDate, $DirName, $ProgName);
+
+$RunDate = strftime '%Y/%m/%d %H:%M:%S', localtime;
+$Rev = (split(' ', '$Revision: 2 $', 3))[1];
+$0 =~ m!(.*)/!; $ProgName = $'; $DirName = $1; $DirName = '.' unless $DirName;
+
+$SIG{'HUP'} =   \&handler;
+$SIG{'INT'} =   \&handler;
+$SIG{'QUIT'} =  \&handler;
+$SIG{'TERM'} =  \&handler;
+
+use Getopt::Std;
+unless (&Getopt::Std::getopts('ofspxv')) {
+    &show_usage();
+    exit(1);
+}
+
+sub handler
+{
+    my($sig) = @_;
+    warn "$ProgName:INFO: Caught a SIG$sig -- shutting down\n";
+
+    exit(0);
+}
+
+sub show_usage
+{
+    print STDERR <<"Usage"
+
+Usage: $ProgName [options] <block_name>
+Options:
+  -v             verbose mode
+  -x             debug mode
+  -p             dump error_xy/piglet.arc
+  -s             summary mode
+  -o             one-line summary
+
+Examples:
+  $ProgName -v 
+
+Print a summary of the DRC results for a block.
+
+Usage
+}
+
+sub get_dir	# Fast get_dir
+{
+    my($B) = @_;
+    return (map {"$_/$B"} grep { -d "$_/$B" } split(/:/,$ENV{'BLOCKPATH'}))[0];
+}
+
+my ($results, $archive, $blk, $date, $drc, $erc, $cont, $waiver, $valid);
+$blk = &get_dir($ARGV[0]);
+$opt_x && print "Block is: $blk\n";
+if (!defined($blk) || ! -d "$blk"){
+   die "Cannot locate block $ARGV[0] on blockpath\n";
+}
+$results=$blk . "/drc_" . $ENV{ICPROCESS} . "/verify_summary";
+$archive=$blk . "/drc_" . $ENV{ICPROCESS} . "/piglet.arc";
+open(IN,"<$results") || die "Verify Summary for $ARGV[0] does not exist!\n";
+
+unless($opt_p){
+   while(<IN>){
+      chomp;
+      /^\s*$/ && do { next; };
+      /^Piece:/ && do { next; };
+      /Missed labels/ && do { next; };
+      /ERC_CONNECT/ && do { next; };
+      /FET\/inst/ && do { next; };
+      /clock_not_ported_warn/ && do { next; };
+      /ART_MODE/ && do { next; };
+      /AUTOPROMOTE/ && do { next; };
+      /Warning:/ && do { next; };
+      /selectsigs:/ && do { next; };
+      /osmosis/ && do { next; };
+      /Conductor areas/ && do { next; };
+      /gate area ratio warnings/ && do { next; };
+      /art_justeval/ && do { next; };
+      /art_noports/ && do { next; };
+      /supply_junction_warn/ && do { next; };
+      /Duplicate name\(s\) generated/ && do { next; };
+      /No valid dependency/ && do { next; };
+      /Open warns/ && do { next; };
+      /Metal. Area/ && do { next; };
+      /No signalnames match/ && do { next; };
+      /^\s*\d+.\d+\s+\d+.\d+/ && do { next; };
+      /\s*-+/ && do { next; };
+      s/\t/     /g;
+
+      /^DRC:/ && do { $drc=$_; };
+      /^ERC:/ && do { $erc=$_; };
+      /^Continuity:/ && do { $cont=$_; $cont=~s/(\d+)\s+(\w+)/$1_$2/g; };
+      /^Waiver:/ && do { $waiver=$_; };
+      /^drc for \S+ is valid/ && do { $valid=$_; };
+
+      unless (defined($opt_s) || defined($opt_o)) { print "$_\n"; }
+   }
+   close(IN);
+} else {
+   $/=";";
+   open(IN,"<$archive") || die "Cannot open error archive file: $archive\n";
+   while(<IN>){
+      chomp;
+      s/\n/ /g;
+      s/^\s+//;
+      /^\s*$/ && do { next; };
+      /^\$FILES/ && do { next; };
+      /^\s*\$;/ && do { next ; };
+      /^EDIT\s*/ && do { next ; };
+      /^SHOW\s*/ && do { next ; };
+      /^LEVEL\s*/ && do { next ; };
+      /^WINDOW\s*/ && do { next ; };
+      /^\s*$ARGV[0]X\s*$/ && do { next; };
+      /:\s+Open\?\"/ && do { next; };
+      /\.PORT\.ME/ && do { next; };
+      /ERC\s+BAD\s+CONNECT/ && do { next; };
+      /\.NPMTWIG_ERCERR/ && do { next; };
+      /OPEN.NAMEGEN/ && do { next; };
+      /ERROR_SUMMARY/ && do { next; };
+      /BLOCK.BOUND/ && do { next; };
+      /OPEN.W/ && do { next; };
+      /^GRID/ && do { next; };
+      /^LOCK/ && do { next; };
+      /^SAVE/ && do { next; };
+      /^EXIT/ && do { next; };
+      /^\s*"\s*Duplicate name\(s\)/ && do { next;};
+# "  Duplicate name(s) generated= 12" -98.5,-936.65;
+# "Continuity: No errors, 97 warnings." -98.5,-585.55;
+# "DRC:64_errors,No_warnings." -98.5,-234.45;
+# "Date: Tue Apr 13 12:20:31 MDT 1999" -98.5,-117.4;
+      s/"Date:\s*([^"]+)"// && do { 
+	 $date=$1; 
+	 print "Run Date: $date\n";
+	 next;
+         };
+      s/"DRC:\s*(\S+)"// && do { 
+	 $drc=$1;
+	 next;
+         };
+      s/"Continuity:\s*([^"]+)"// && do { 
+	 $cont=$1;
+         $cont=~s/(\d+)\s+(\w+)/$1_$2/g;
+	 next;
+         };
+
+      # filter down the error report
+      if ($opt_f){
+         use vars qw($layer $error $note $coord $rest);
+         s/ADD\s*//;
+         ($layer, $error, $rest)=split(/ /,$_,3);
+         $error =~ s/^\.//;
+         if ($layer =~ /^N/){
+            $rest=~s/^:F\d+\s+//;
+            $rest =~ s/"([^"]+)"\s+//;
+            $note=$1;
+            $coord=$rest;
+            #print "$error: $note\n";
+            ++$Error{$error};
+         } else { 
+            #print "$error\n";
+            ++$Error{$error};
+         }
+      } else {
+         print "$_\n";
+      }
+   }
+   close(IN);
+}
+
+if (defined($opt_f) && defined($opt_p)){
+   for my $key (sort keys %Error){
+      print "Error Type: $key found $Error{$key} times\n";
+   }
+}
+
+
+
+if ($opt_s){
+   $drc=~s/DRC:\s*//;
+   $cont=~s/Continuity:\s+//;
+   $erc=~s/ERC:\s*//;
+
+   print "Drc: $drc\n";
+   unless(defined($opt_p)){
+      print "ERC: $erc\n";
+   }
+   print "Continuity: $cont\n";
+   if (defined($waiver)){ 
+      my $waiver_flag=$blk . "/blk_waiv_flag";
+      if ( -r $waiver_flag ) {
+         print "Block has been waivered!\n";
+         }
+      else {
+         print "$waiver\n"; 
+         }
+   }
+}
+
+if ($opt_o){
+
+   $drc=~s/DRC:\s*//;
+   $cont=~s/Continuity:\s+//;
+   $erc=~s/ERC:\s*//;
+
+   $drc=~s/,\s*/\//;
+   $drc=~s/No_warnings/0/;
+   $drc=~s/_errors//;
+   $drc=~s/_warnings//;
+   $drc=~s/\.//;
+
+   $cont=~s/,\s*/\//;
+   $cont=~s/No_warnings/\/0/;
+   $cont=~s/_errors//;
+   $cont=~s/_warnings//;
+   $cont=~s/\.//;
+
+   $erc=~s/,\s*/\//;
+   $erc=~s/No_warnings/\/0/;
+   $erc=~s/_errors//;
+   $erc=~s/_warnings//;
+   $erc=~s/\.//;
+
+   print "DRC=$drc, Continuity=$cont, ERC=$erc\n";
+}
+
+__END__

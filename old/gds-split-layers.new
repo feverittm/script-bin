@@ -1,0 +1,853 @@
+#!/usr/bin/perl5
+#
+# Given a GDS file on the command line and a split specification file,
+# this program will split the data into multiple files separated by layer.
+# It will first calculate the sizes of these files and complain if any
+# are too large.
+
+# Bob Proulx
+# modified by George Robbert 10/2/97
+
+my $rcsid='@(#) $Id: gds-split-layers,v 1.11 1998/03/12 17:20:55 ghr Exp $ ';
+
+use 5.003;
+use Getopt::Long;
+use IO::File;
+
+# use strict;			# On for debugging, off for release.
+
+# Declare global variables.
+my $progname = $0; $progname =~ s@.*/@@;
+
+my $debug = 0;			# program options
+my $help = 0;
+my $just_print = 0;
+my $just_split = 0;
+my $verbose = 0;
+my $quiet = 0;
+my $countonly = 0;
+my $forcesplit = 0;
+my $logfilename;
+my $nosuffix = 0;
+my $rename = "";
+my $ourname = 0;
+my $gdsname = 0;
+my $layerfile = -1;
+my $default_layerspecfile = "layer-split-spec";
+my $layerspecfile = "";
+my %layerspecs;
+my $ignored_layers;
+my %gds_layer_sizes;
+my $maxfilesize = 1024*1024*1024*2;
+my %file_sizes;
+my $log;
+
+my %namemap;
+
+my $mapfilename = "/tmp/gdscutmap$$";
+my $tmpfilename = "gds-split.tmp$$";
+
+# Set a signal handler to clean up if we catch a signal.
+# As long as we catch the signal then sub END will be called when the
+# script exits, even if on a signal.
+
+# Set signal handlers so we can clean up our temporary files.
+$SIG{'HUP'} = \&sighandler;
+$SIG{'INT'} = \&sighandler;
+$SIG{'QUIT'} = \&sighandler;
+$SIG{'TERM'} = \&sighandler;
+
+sub sighandler {
+    my $sig = shift;
+    STDERR->print($progname,": signal $sig received, cleaning up.\n");
+    # sub END and friends run when we exit.
+    exit(1);
+}
+
+sub END {
+    unlink($mapfilename);
+    ( -f $tmpfilename ) && unlink($tmpfilename);
+}
+
+# ================================================================
+
+# A class to encapsulate timer usage.  Collecting timer statistics
+# of the run time of your program has never been easier.  Should
+# really be a "use" package.  As soon as we have a good place to put
+# local use packages.
+
+package Timer;			# Start of class definition.
+
+sub DESTROY {
+}
+
+sub new {
+    my $class = shift;
+    my $self = {};
+    bless $self, $class;
+
+    $self->reset();		# Initialize everything.
+    $self->start();		# Start it running.
+
+    return $self;
+}
+
+sub reset {
+    my $self = shift;
+    $self->{'starttime'} = 0;
+    $self->{'stoptime'} = 0;
+    $self->{'isrunning'} = 0;	# Set to false.
+    return $self;
+}
+
+sub start {
+    my $self = shift;
+    if (!$self->{'isrunning'}) {
+	# If it is not already running get the new time.
+	# This means starting many times takes the longest time.
+	$self->{'starttime'} = time();
+	$self->{'isrunning'} = 1;
+    }
+    return $self;
+}
+
+sub stop {
+    my $self = shift;
+    if ($self->{'isrunning'}) {
+	# Stop the clock if it is running.
+	# This means if we stop it several times we take the shortest time.
+	$self->{'stoptime'} = time();
+	$self->{'isrunning'} = 0;
+    }
+    return $self;
+}
+
+# Return the value of the timer in number of seconds since start.
+sub value {
+    my $self = shift;
+    my $value = 0;
+    if ($self->{'isrunning'}) {
+	$value = time() - $self->{'starttime'};
+    } else {
+	$value = $self->{'stoptime'} - $self->{'starttime'};
+    }
+    return $value;
+}
+
+# Return the time since start in a nice human readable format.
+sub string {
+    my $self = shift;
+
+    my $elapsedtime = $self->value();
+    my $minutes = int($elapsedtime / 60);
+    my $seconds = $elapsedtime % 60;
+    my $hours = int($minutes / 60);
+    my $days = int($hours / 24);
+    $minutes = $minutes % 60;
+    $hours = $hours % 24;
+
+    my $timestr = '';
+
+    if ($days != 0) {
+	warn "days = $days==\n";
+	$timestr = sprintf("%dd%dh%02dm%02ds",
+			   $days,$hours,$minutes,$seconds);
+    } elsif ($hours != 0) {
+	$timestr = sprintf("%dh%02dm%02ds", $hours,$minutes,$seconds);
+    } elsif ($minutes >= 10) {
+	$timestr = sprintf("%02dm%02ds", $minutes,$seconds);
+    } elsif ($minutes != 0) {
+	$timestr = sprintf("%dm%02ds", $minutes,$seconds);
+    } elsif ($seconds >= 10) {
+	$timestr = sprintf("%02ds",$seconds);
+    } else {
+	$timestr = sprintf("%ds",$seconds);
+    }
+
+  return $timestr;
+}
+
+# Return the time in fraction minutes since start.
+sub minutes {
+    my $self = shift;
+
+    my $elapsedtime = $self->value();
+    my $minutes = $elapsedtime / 60.00;	# Want a floating point number.
+
+    my $timestr = sprintf("%e1.4 minutes",$minutes);
+
+    return $timestr;
+}
+
+package main;			# End of class definition.
+
+# ================================================================
+
+package LogFile;		# Start of class definition.
+
+# Since we want the messages to be synchronous even from different
+# processes writing to the log file we create a class to handle this.
+
+sub DESTROY {
+    my $self = shift;
+    $self->close();
+}
+
+sub new {
+    my $class = shift;
+    my $self = {};
+    bless $self, $class;
+
+    $self->{'name'} = shift;
+    if (length($self->{'name'}) <= 0) {
+	die $progname, ": Internal Error: Need a file name for LogFile\n";
+    }
+
+    $self->open();
+
+    return $self;
+}
+
+sub open {
+    my $self = shift;
+
+    $self->{'file'} = new IO::File;
+
+    if ($self->{'file'}->open($self->{'name'},'w') == 0) {
+	warn $progname, ": ERROR: Could not write \"$self->{'name'}\": $!\n";
+	my $dir = $self->{'name'};
+	$dir =~ s@/[^/]+$@@;
+	system("ls -ld $dir $self->{'name'}");
+	exit(1);
+    }
+    $self->{'file'}->close();
+
+
+    if ($self->{'file'}->open($self->{'name'},'a') == 0) {
+	die $progname,": ERROR: Could not append to \"$self->{'name'}\": $!\n";
+    }
+}
+
+sub close {
+    my $self = shift;
+    $self->{'file'}->close();
+}
+
+sub print {
+    my $self = shift;
+
+    print($progname, ": ", @_);
+    $self->{'file'}->print($progname, ": ", @_);
+    $self->flush();
+}
+
+sub warn {
+    my $self = shift;
+
+    print STDERR ($progname, ": ", @_);
+    $self->{'file'}->print($progname, ": ", @_);
+    $self->flush();
+}
+
+sub die {
+    my $self = shift;
+
+    $self->{'file'}->print($progname, ": ", @_);
+    $self->flush();
+    print($progname, ": ", @_);
+    exit(1);
+}
+
+sub echo {			# Like print but no prefix.
+    my $self = shift;
+
+    $self->{'file'}->print(@_);
+    $self->flush();
+    print(@_);
+}
+
+sub flush {
+    my $self = shift;
+
+    # This is a hokey piece of code to work around Perl file defeciencies.
+    if (defined($self->{'file'})) {
+	$self->{'file'}->autoflush(1);
+	$self->{'file'}->print("");
+	$self->{'file'}->autoflush(0);
+    }
+}
+
+package main;			# End of class definition.
+
+# ================================================================
+
+sub print_short_usage {
+    STDERR->print("usage: $progname [options] gdsfile\n");
+    STDERR->print($progname, ": Use --help to give you more information.\n");
+}
+
+sub print_usage {
+    STDERR->print("$rcsid\n");
+    STDERR->print("usage: $progname [options] gdsfile\n");
+    STDERR->print("options include:\n");
+    STDERR->print("--debug            debug messages on\n");
+    STDERR->print("--help             print this help message\n");
+    STDERR->print("--just-count       only calculate file sizes\n");
+    STDERR->print("--just-print       not really, just preview\n");
+    STDERR->print("--just-split       skip layer-counting, just split files\n");
+    STDERR->print("--layers=s         layer-split specification file\n");
+    STDERR->print("--logfile=s        log file name\n");
+    STDERR->print("--quiet            less output\n");
+    STDERR->print("--rename=s         rename s is from=to\n");
+    STDERR->print("--verbose          verbose messages on\n");
+    STDERR->print("--layerfile        create just this file\n");
+    STDERR->print("--maxfilesize=i    maximum size on split output files\n");
+    STDERR->print("--force-split      split even if file size is too big\n");
+    STDERR->print("--nosuffix         don't add filename suffix to top-level cells\n");
+    STDERR->print("-d                 debug messages on\n");
+    STDERR->print("-n                 not really, just preview\n");
+    STDERR->print("-v                 verbose messages on\n");
+}
+
+sub process_options {
+    $Getopt::Long::bundling = 1;
+    # $Getopt::Long::order = $REQUIRE_ORDER;
+
+    my %longopts = (
+		    "d"              => \$debug,
+		    "debug"          => \$debug,
+		    "help"           => \$help,
+		    "count-layers"   => \$countonly,
+		    "just-count"     => \$countonly,
+		    "just-print"     => \$just_print,
+		    "just-split"     => \$just_split,
+		    "layerfile=i"    => \$layerfile,
+		    "logfile=s"      => \$logfilename,
+		    "layers=s"	     => \$layerspecfile,
+		    "n"              => \$just_print,
+		    "maxfilesize=i"  => \$maxfilesize,
+		    "force-split"    => \$force_split,
+		    "nosuffix"       => \$nosuffix,
+		    "quiet"          => \$quiet,
+		    "rename=s"       => \$rename,
+		    "v"              => \$verbose,
+		    "verbose"        => \$verbose,
+		    );
+
+    if (!&GetOptions(%longopts)) {
+	warn $progname, ": illegal command line option\n";
+	&print_short_usage();
+	return -1;
+    }
+
+    if ($help) {
+	&print_usage();
+	return -1;
+    }
+
+    if (length($logfilename) <= 0) {
+	$logfilename = "gds-split-layers.log";
+    }
+
+    $log = new LogFile($logfilename);
+
+
+    $verbose = 1 if $debug;
+
+    if (length($layerspecfile) <= 0) {
+	$layerspecfile = $default_layerspecfile;
+	warn $progname, ": using default of --layers $layerspecfile\n";
+    }
+
+    if (&read_splitspec($log)) {
+	warn $progname, ": error reading split specification file.\n";
+	exit(1);
+    }
+    
+    ($ourname,$gdsname) = split(/[ ,=]+/,$rename);
+    $gdsname = lc $gdsname;	# Lower case filename for Intel
+    if (!$countonly) {
+	if (length($ourname) <= 0 || length($gdsname) <= 0) {
+	    warn $progname, ": need rename command in layer split spec\n";
+	    &print_short_usage();
+	    return -1;
+	}
+    }
+    else {
+	if (length($ourname) <= 0) {
+	    $ourname = "split-file";
+	}
+    }
+
+    return 0;
+}
+
+# This routine reads the split specification file
+#
+sub read_splitspec {
+    my $log = shift;
+    my $retval = 0;
+    my $fileno = "";
+    my $thislayer;
+    my $rename_spec = "";
+
+    unless (open(SPLITSPEC, $layerspecfile)) {
+	$log->die("cannot open --layers file ", $layerspecfile);
+    }
+    while (<SPLITSPEC>) {
+	chop;
+	s/#.*$//g;
+	s/^\s*//g;
+	s/\s*$//g;
+	if (/^file\s/) {
+	    if ($fileno !~ /^$/) {
+		$log->warn("$layerspecfile: missing endfile\n");
+		$retval = 1;
+		$layerspecs{$fileno} = substr($layerspecs{$fileno},1);
+	        $fileno = "";
+	    }
+	    if (/file\s+(\d+)$/) {
+		$fileno = $1;
+		if (length($layerspecs{$fileno}) > 0) {
+	    	    $log->warn("$layerspecfile: duplicate spec for file $fileno\n");
+		    $layerspecs{$fileno} = "," . $layerspecs{$fileno};
+		    $retval=1;
+		}
+	    }
+	    else {
+	    	$log->warn("$layerspecfile: bad layer file spec:\n");
+	    	$retval = 1;
+	    }
+	}
+	# note: ignored layers are slurped as belonging to file "i"
+	elsif (/^ignore/) {
+	    if ($fileno !~ /^$/) {
+		$log->warn("$layerspecfile: missing endfile\n");
+		$retval = 1;
+		$layerspecs{$fileno} = substr($layerspecs{$fileno},1);
+	        $fileno = "";
+	    }
+	    $fileno = "i";
+	    if (length($layerspecs{$fileno}) > 0) {
+		$log->warn("$layerspecfile: duplicate spec for 'ignore'\n");
+		$layerspecs{$fileno} = "," . $layerspecs{$fileno};
+		$retval=1;
+	    }
+	}
+	elsif (/^endfile/) {
+	    if (length($fileno) <= 0) {
+		$log->warn("$layerspecfile: endfile without matching file\n");
+		$retval = 1;
+	    }
+	    else {
+		$layerspecs{$fileno} = substr($layerspecs{$fileno},1);
+	        $fileno = "";
+	    }
+	}
+	elsif (/^\d+/) {
+	    if (length($fileno) <= 0) {
+		$log->warn("$layerspecfile: layer spec outside of file '", $_, "'\n");
+		$retval = 1;
+	    }
+	    elsif (/^\s*(\d+)\s+(\d+)\s*$/) {
+		$thislayer = sprintf("%02d %02d",$1,$2);
+		if ($layerspecs{$fileno} =~ /$thislayer/) {
+		    $log->warn("$layerspecfile: Ignoring duplicate layer" .
+				" $thislayer in file $fileno\n");
+		}
+		else {
+		    $layerspecs{$fileno} = $layerspecs{$fileno} . "," .  $thislayer;
+		}
+	    }
+	    else {
+		$log->warn("$layerspecfile: illegal layer spec '", $_, "'\n");
+		$retval = 1;
+	    }
+        }
+	elsif (/^rename/) {
+	    if (length($fileno) > 0) {
+		$log->warn("$layerspecfile: rename should occur outside file ... endfile\n");
+	    }
+	    if (/rename\s+(\w+)\s+(\w+)$/) {
+		if (length($rename_spec) > 0) {
+		    $log->warn("$layerspecfile: duplicate rename\n");
+		    $retval = 1;
+		}
+		else {
+		    $rename_spec = $1 . "=" . $2;
+		}
+	    }
+	    else {
+		$log->warn("$layerspecfile: bad rename command:\n");
+		$retval=1;
+	    }
+	}
+	elsif (!/^\s*$/) {
+	    $log->warn("$layerspecfile: illegal split spec: '", $_, "'\n");
+	    $retval = 1;
+	}
+    }
+    close(SPLITSPEC);
+    if ($fileno != "") {
+	$log->warn("$layerspecfile: missing endfile\n");
+	$layerspecs{$fileno} = substr($layerspecs{$fileno},1);
+	$retval = 1;
+    }
+    # note: ignored layers are slurped as belonging to file "i"
+    #   undo this and put them in their own variable.
+    $ignored_layers = $layerspecs{"i"};
+    delete $layerspecs{"i"};
+    if (length($rename) > 0) {
+	warn "overriding rename $rename_spec with $rename";
+    }
+    else {
+	$rename = $rename_spec;
+    }
+    return($retval);
+}
+
+# This routine will generate a file using the given command if it
+#  is out of date with respect to the source.  It places output
+#  in a temporary file and moves it inot place upon successful
+#  completion to avoid collision problems with concurrent running.
+sub safe_file_gen {
+    my $log     = shift;
+    my $target  = shift;
+    my $source  = shift;
+    my $tmpfile = shift;
+    my $command = shift;
+
+
+    if (! -f $target
+        || (stat(_))[9] < (stat($source))[9]) {
+	$log->print("$source is newer than $target\n");
+	$log->print("Running $command to create it.\n");
+
+	# print log message we're ok
+	$command = $command . " >$tmpfile";
+	system($command) && do {
+	    unlink($tmpfile);
+	    $log->die("Error while executing $command");
+        };
+	if ( -z $tmpfile ) {
+	    unlink($tmpfile);
+	    $log->die("Error, no output from $command");
+	}
+	rename ($tmpfile, $target);
+    }
+    else {
+	$log->print("$target is valid for $source\n");
+	$log->print("Skipping the $command run.\n");
+    }
+}
+
+# This routine gets the layer sizes from the given GDSII file using gds_count
+#
+sub get_layer_sizes {
+    my $log = shift;
+    my $gdsfilename = shift;
+    my $retval = 0;
+    my $gds_count_file = $gdsfilename . ".count";
+    my $reading_header = 1;
+    my $index;
+
+    # Create count of layers from $gdsfilename 
+    my $cmd = "gds_count -i $gdsfilename";
+    &safe_file_gen($log, $gds_count_file, $gdsfilename, $tmpfilename, $cmd);
+
+    unless (open(GDS_COUNT_FILE, $gds_count_file)) {
+    	$log->die("cannot open $gds_count_file");
+    }
+    while (<GDS_COUNT_FILE>) {
+	s/;/ /;
+	if ($reading_header) {
+	    $reading_header = 0  if (/^---------/);
+	}
+	else {
+	    chop;
+	    if (!/^(\w+ \w+)\s+(\d+)$/) {
+		$log->warn("bad output from gds_count ",$_);
+		$retval = 1;
+	    } else {
+	        $gds_layer_sizes{$1} = $2;
+	    }
+	}
+    }
+    if ($reading_header) {
+	$log->die("bad/missing output from gds_count");
+    }
+
+    if ($gds_layer_sizes{"fixed overhead"} <= 0) {
+	$log->warn("no fixed;overhead found in gds_count output");
+	$retval = 1;
+    }
+
+    close(GDS_COUNT_FILE);
+    return($retval);
+}
+
+# This routine calcualtes sizes of the files that would be generated by 
+# the split.  It also keeps track of which layers are used in the split
+# and warns if any exist in the gds file, but are not called out anywhere 
+# in the split.
+#
+sub calculate_size {
+    my $log = shift;
+    my $gdsname = shift;
+    my $retval = 0;
+    my $fileno;
+    my $layer;
+    my $filesize;
+    my $pad;
+    my $tobigmsg;
+    my $filename;
+
+    foreach $fileno (keys(%layerspecs)) {
+	$filesize = $gds_layer_sizes{"fixed overhead"};
+	foreach $layer (split(/,/,$layerspecs{$fileno})) {
+	    $filesize += $gds_layer_sizes{$layer};
+	    $layers_used{$layer} = 1;
+	}
+	$pad = 2048 - ($filesize % 2048);
+	if ($pad == 2048) {
+	    $pad = 0;
+	}
+        $filesize = $filesize + $pad;
+        $tobigmsg = "";
+	if ($filesize >= $maxfilesize) {
+	    $tobigmsg = " ERROR: file too large";
+	    #$log->warn("$gdsname_$fileno.stm is too large\n");
+	    $retval = 1;
+	}
+        $filename = $gdsname . "_" . $fileno . ".stm";
+	$log->print("   ",$filename," size = ",$filesize,$tobigmsg,"\n");
+	$file_sizes{$filename} = $filesize;
+    }
+
+    # check to make sure all layers in file are used in split
+    # warn if any are not.  Note that some layers are marked
+    # "used" by the 'ignore' list in the split spec file.
+    $layers_used{"fixed overhead"} = 1;
+    foreach $layer (split(/,/,$ignored_layers)) {
+	$layers_used{$layer} = 1;
+    }
+    foreach $layer (keys(%gds_layer_sizes)) {
+	if ($layers_used{$layer} == 0 && $layer != "") {
+	    $log->warn("layer $layer in $gdsfilename not used in split\n");
+        }
+    }
+    return($retval);
+}
+
+
+# This routine reads through the gds.hier file and collects a list of
+# block names.  It checks for case collision.  It makes a map of lower
+# case name to upper case name.  This is used later to generate the
+# gds_cut map file renaming all of the names when we split the file.
+# While checking the block names for case collision, it also checks to
+# make sure the specified top level cell actually exists
+#
+# The first pass through the file for this name query takes about 20
+# minutes on a 5GB file.  Therefore I consider it acceptable.  The
+# alternative would be to modify gds_cut to only put out upper case
+# names.  While certainly doable it would split the gds_cut source
+# tree and I did not want to do that for this small feature.
+#
+sub gds_hier_case_query {
+    my $log = shift;
+    my $gdsfilename = shift;
+    my $ourname = shift;
+    my $found_top_level = 0;
+
+    my $hiername_filename = "gds2asc-h.out";
+    my $cmd               = "gds2asc -h $gdsfilename";
+    &safe_file_gen($log,$hiername_filename,$gdsfilename,$tmpfilename,$cmd);
+
+    my $gds2aschier = new IO::File;
+    $gds2aschier->open($hiername_filename) || do {
+	$log->die("Could not read \"$hiername_filename\": $!\n");
+    };
+    my %namemap;
+    my %revnamemap;
+    my @conflictlist;
+
+    while (<$gds2aschier>) {
+	if (m/(.*):/) {
+	    my $name = $1;
+	    my $ucname = uc($name);
+
+	    $found_top_level = 1  if ($name eq $ourname);
+	    if (defined($revnamemap{$ucname})) {
+		push(@conflictlist,$name);
+	    } else {
+		if ($ucname ne $name) {	# No need to map if already upper case.
+		    $namemap{$name} = $ucname;
+		}
+		# but still need to keep track of upper case names
+		$revnamemap{$ucname} = $name;
+	    }
+	}
+    }
+    $gds2aschier = undef;
+
+    for $name (@conflictlist) {
+	my $ucname = uc($name);
+	$log->warn("Case folding conflict with: \"",$name,"\"",
+		   " and \"", $revnamemap{$ucname},"\".\n");
+	my $uniq_suffix = "0";
+	for (;;) {
+	    $ucname = uc($name . $uniq_suffix);
+	    if (!defined($revnamemap{$ucname})) {
+		last;
+	    }
+	    $uniq_suffix++;
+	}
+	$log->warn("Generating unique upper case name \"$ucname\" for \"$name\".\n");
+	$namemap{$name} = $ucname;
+	$revnamemap{$ucname} = $name;
+    }
+    if ($found_top_level == 0) {
+        $log->die("Top level cell $ourname does not occur in input file\n");
+    }
+    return %namemap;
+}
+
+sub gds_split {
+    my $log = shift;
+    my $ourname = shift;
+    my $gdsname = shift;
+    my $gdsfilename = shift;
+    my @layer_list = @_;
+    # %namemap comes in as a global array variable.
+
+    $quiet || warn "Creating file $gdsname.stm\n";
+
+    my $gdsfile = new IO::File;
+
+    my $mapfile = new IO::File;
+    $mapfile->open($mapfilename,'w') ||
+	$log->die("Could not write \"$mapfilename\": $!\n");
+    $mapfile->print("FILE $gdsfilename\n");
+    $mapfile->print("RENAME $ourname ",uc($gdsname),"\n");
+    for $name (keys %namemap) {
+	if ($name ne $ourname) { # We already rename this top level name.
+	    $mapfile->print("RENAME $name $namemap{$name}\n");
+	}
+    }
+    $mapfile->print("BOTH\n");
+    $mapfile->print("* * DISCARD\n");
+
+    for my $layer (@layer_list) {
+	$mapfile->print("$layer & &\n");
+    }
+    $mapfile = undef;		# flush, close and free
+    
+    my $gdscutcmd = "gds_cut -m $mapfilename > $gdsname.stm";
+    system($gdscutcmd) && do {
+	$log->die("Error while executing \"$gdscutcmd\": $!\n");
+    };
+    $log->print("Split $gdsname.stm operation successful\n");
+    unlink($mapfilename);
+    return 0;
+}
+
+# Verify that the size of files generated by gds_cut match the calculated sizes
+#
+sub check_filesizes {
+    my $log = shift;
+    my $command = "ls -l " . join(" ", @_);
+    my $retval = 0;
+
+    unless (open(FILE_SIZE_CMD, "$command |")) {
+	$log->die("cannot execute $command\n");
+    }
+    while (<FILE_SIZE_CMD>) {
+	($prm,$lnk,$usr,$grp,$size,$mon,$day,$tim,$fname) = split;
+	if ($file_sizes{$fname} != $size) {
+	    $log->warn("Error: calculated size mismatch $size != $file_sizes{$fname}\n");
+	    $retval = 1;
+	}
+    }
+    close(FILE_SIZE_CMD);
+    $log->die("error executing $command\n") if $?;
+    return($retval);
+}
+
+#
+#
+#
+sub main {
+    my $globaltimer = new Timer;
+    my @filename_list;
+
+    if (&process_options() < 0) {
+	die $progname, ": exiting\n";
+    }
+
+    if (@ARGV <= 0) {
+	warn $progname, ": Missing name of GDS file to process.\n";
+	&print_short_usage();
+	exit(1);
+    }
+    if (@ARGV > 1) {
+	warn $progname, ": Too many arguments on command line.\n";
+	&print_short_usage();
+	exit(1);
+    }
+    my $gdsfilename = $ARGV[0];
+    if ((stat($gdsfilename))[9] eq "") {
+	die $progname, ": requires large-file enabled PERL\n";
+    }
+
+
+    if (!$just_split) {
+	if (&get_layer_sizes($log,$gdsfilename)) {
+	    warn $progname, ": error reading gds_count output.\n";
+	    exit(1);
+	}
+
+	if (&calculate_size($log,$gdsname)) {
+	    warn $progname, ": Split file(s) calculated too large.\n";
+	    exit(1) unless $force_split;
+	    warn $progname, ":    Continuing anyway due to --force-split.\n";
+	}
+    }
+
+    if ($countonly) {
+	return(0);
+    }
+
+    %namemap = &gds_hier_case_query($log,$gdsfilename,$ourname);
+
+    my $name;
+    my $fileno;
+
+    foreach $fileno (keys(%layerspecs)) {
+	if ($layerfile < 0 || $layerfile == $fileno) {
+	    if ($nosuffix) {
+		$name = $gdsname;
+	    }
+	    else {
+		$name = $gdsname . '_' . $fileno;
+	    }
+	    &gds_split($log,$ourname,$name,$gdsfilename,
+		       split(/,/,$layerspecs{$fileno}));
+	    $fname = $gdsname . '_' . $fileno . ".stm";
+	    @filename_list = (@filename_list, $fname);
+        }
+    }
+
+    if (!$just_split) {
+	if (&check_filesizes($log,@filename_list)) {
+	    $log->warn("Split file size mismatch\n");
+	    exit(1);
+	}
+	else {
+	    $log->print("Split file sizes match calculations\n");
+	}
+    }
+
+    return 0;
+}
+
+exit(&main());

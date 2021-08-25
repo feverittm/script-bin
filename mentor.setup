@@ -1,0 +1,393 @@
+#!/usr/bin/ksh
+#
+# $Header: /sdg/lib/shell/RCS/mentor.setup,v 1.55 2007/05/23 15:39:56 byoung Exp $
+#----------------------------------------------------------------------------
+# Synopsis:
+#
+#    eval $(envy mentor.setup [process])
+#     -or-
+#    eval $(envy mentor_<process>.setup)
+#     -or-
+#    mentor.setup -l
+#
+# Description:
+#    mentor.setup is an envy(1) setup script that establishes an
+#    environment for using the Mentor Graphics tools.
+#
+#    The environment includes process customization if supplied with a
+#    <process>, either as an argument or implicitly in the script's
+#    basename.  If no <process> is provided then a generic environment is
+#    established.
+#
+#    Invoked with the '-l' option mentor.setup lists the supported
+#    processes, one per line, to stdout.  This '-l' functionality is
+#    incompatible with envy(1) and is intended to support apple(1).
+#
+# Environment:
+#    $MENTOR_REL is used if it is already set.
+#    $AMS_REL is used if it is already set.
+#
+# Tested with
+#    HP-UX 11.11:  ksh, dtksh, sh
+#    linux:        ksh (ksh93), sh, bash
+#
+#----------------------------------------------------------------------------
+
+progname=${0##*/}	# basename of script
+
+RUNSETS=/sdg/lib/shell/calibre_runsets
+MENTOR_LATEST='icf2005.1'
+AMS_LATEST='ams2005.3'
+
+: ${MENTOR_REL:=${MENTOR_LATEST}}
+: ${AMS_REL:=${AMS_LATEST}}
+
+# Determine OS
+case "$(uname -s)" in
+   HP-UX)
+      OS=hpux
+      ;;
+   Linux)
+      OS=linux
+      ;;
+esac
+
+export MGC_AMS_HOME=/apps/mentor/$OS/${AMS_REL}
+
+# This 'requests' array contains the user-requestable process names.  These
+# are NOT the same as process names (but they're close)...  Please keep in
+# sorted order.
+requests[0]='brg'
+requests[1]='cd20x'
+requests[2]='cd40'
+requests[3]='cd40l'
+requests[4]='generic'
+requests[5]='hv05'
+requests[6]='nd20x'
+requests[7]='old'
+requests[8]='sfx'
+requests[9]='tij25'
+requests[10]='tsmc35'
+
+
+# Determine which design process we want from command line options
+if [[ -n $1 ]] ; then
+
+    # If we were invoked with a single '-l' argument then we list the
+    # supported processes, one per line.  This invocation comes as a query
+    # from apple(1) to obtain the supported processes.
+    if [[ $1 != '-l' ]] ; then
+
+	# we were passed a <process> argument
+	process="$1"
+    else
+
+	# we should respond to the apple(1) request
+	echo ${requests[*]} | tr ' ' '\012'
+	exit 0
+    fi
+
+elif [[ $progname != 'mentor.setup' ]] ; then
+
+    # There was no <process> argument, try and extract it from the
+    # scriptname - like 'cd40' from 'mentor_cd40.setup'
+    process=${progname##mentor_}
+    process=${process%%.setup}
+
+    # Special hook to help with obsoleting old Calibre script
+    [[ "$process" = "calibre" ]] && process='generic'
+
+else
+
+    # default to generic if not specified
+    process='generic'
+    echo 'ECHO No requested process; using generic default.'
+fi
+
+# Now validate
+if [[ " ${requests[*]} " != *" $process "* ]] ; then
+
+    echo "$progname: Requested process does not exist: '$process'" 1>&2
+    echo "  valid processes are: ${requests[*]}" 1>&2
+    exit 1
+fi
+
+# General ones...
+export MGC_HOME=/apps/mentor/$OS/$MENTOR_REL
+export MGC_DEFAULT_PRINTER_NAME=laser
+export MGC_LOCATION_MAP=/sdg/mgc/GROUP_IC_MAP
+export EL_LIBRARY_PATH=/sdg/mgc/userware/ele
+export X11DD_NAMED_COLORMAP=PRIVATE
+
+if [[ ! -d ${MGC_HOME} ]] ; then
+   echo "ECHO Mentor Release $MENTOR_REL does not exist on $MGC_HOME!"
+   echo "ECHO Please check again and re-try the setup."
+   exit 1
+fi
+
+if [[ ! -d ${MGC_AMS_HOME} ]] ; then
+   echo "ECHO AMS Release $MGC_AMS_REL does not exist on $MGC_AMS_HOME!"
+   echo "ECHO Please check again and re-try the setup."
+   exit 1
+fi
+
+# Calibre is managed using a symlink in /apps/mentor/${OS}
+#   However, if the user requests a diffent version of calibre,
+#   this variable needs to be set accordingly.
+if [ -n "${CAL_REL}" ]
+then
+   export CALIBRE_HOME=/apps/mentor/${OS}/${CAL_REL}
+else
+   export CALIBRE_HOME=/apps/mentor/${OS}/calibre
+fi
+
+# Check for install libraries in configured release
+if [[ -d ${MGC_HOME}/mgc_icstd_lib ]] ; then
+   export MGC_IC_LIB=$MGC_HOME/mgc_icstd_lib
+   export MGC_IC_GENERIC_LIB=$MGC_HOME/mgc_icstd_lib/generic_lib
+   export MGC_IC_SOURCES_LIB=$MGC_HOME/mgc_icstd_lib/sources_lib
+   export MGC_IC_DEVICE_LIB=$MGC_HOME/mgc_icstd_lib/device_lib
+   export MGC_IC_COMMLIB=$MGC_HOME/mgc_icstd_lib/mgc_ic_commlib
+   export MGC_IC_COMMLIB_QS=$MGC_HOME/mgc_icstd_lib/mgc_ic_comm_qs
+   export MGC_MACROLIB=$MGC_HOME/mgc_icstd_lib/mgc_ic_macrolib
+else
+
+   export MGC_ICLIB_ROOT=/apps/mentor/hpux/icf2004.3p
+
+   if [[ -d ${MGC_HOME}/design_lib ]] ; then
+
+      export MGC_ICLIB_ROOT=${MGC_HOME}/design_lib
+
+      # ICFlow Libraries
+      export MGC_IC_LIB=$MGC_HOME/mgc_icstd_lib
+      export MGC_IC_GENERIC_LIB=$MGC_ICLIB_ROOT/mgc_ic_lib/generic_lib
+      export MGC_IC_SOURCES_LIB=$MGC_ICLIB_ROOT/mgc_ic_lib/sources_lib
+      export MGC_IC_DEVICE_LIB=$MGC_ICLIB_ROOT/mgc_ic_lib/device_lib
+      export MGC_IC_COMMLIB=$MGC_ICLIB_ROOT/mgc_ic_commlib
+      export MGC_MACROLIB=$MGC_ICLIB_ROOT/mgc_ic_macrolib
+   else
+
+      echo "ECHO ... no design_lib found using default $MGC_ICLIB_ROOT"
+   fi
+fi
+
+if [ -f $MGC_HOME/mgc_icstd_lib/global.ncf ]
+then
+   export NCF_GLOBAL=$MGC_HOME/mgc_icstd_lib/global.ncf
+else
+   export NCF_GLOBAL=/sdg/mgc/ncf/icf2004.2.global.ncf
+fi
+
+# Special fix for the UI_DISPLAY problem
+# Awkward ! string != pattern used as synonym for == for portability
+[[ -n $UI_DISPLAY  &&  ! ($MENTOR_REL != 'icf2005.1') ]] && unset UI_DISPLAY
+
+[[ -n $CD40 ]] && unset CD40 CD40LIB
+
+[[ -n $anacad ]] && unset anacad
+
+# protect re-entrant setups...
+unset MGC_CALIBRE_LVS_RUNSET_FILE
+unset MGC_CALIBRE_DRC_RUNSET_FILE
+unset MGC_CALIBRE_PEX_RUNSET_FILE
+
+#==============================================================================
+# Make sure you add any additional processes to the 'requests' and 'procNames'
+# arrays at the beginning of the script!
+#==============================================================================
+case "$process" in
+
+   cd20x)
+      AMPLE_PATH=/sdg/lib/cd20x/design_kit/userware:/sdg/mgc/userware:/sdg/mgc/userware/st:~/mgc/userware
+      export CD20="/sdg/lib/cd20x/design_kit/CD20"
+      export CD20LIB="/sdg/lib/cd20x/design_kit/CD20LIB"
+      export CD20TECH="/sdg/lib/cd20x/design_kit/CD20TECH"
+      export HPLIB="/sdg/lib/cd20x/design_kit/cd20II/hplib"
+      export HPLIBA="/sdg/lib/cd20x/design_kit/cd20II/hpliba"
+      export SETUP=CD20X
+      ;;
+
+   nd20x)
+      AMPLE_PATH=/sdg/lib/nd20x/design_kit/userware:/sdg/mgc/userware:/sdg/mgc/userware/st:~/mgc/userware
+      export ND20P="/sdg/lib/nd20x/design_kit/prim_lib"
+      export ND20="/sdg/lib/nd20x/design_kit/cell_lib"
+      export SETUP=ND20X
+      ;;
+
+   cd40)
+      AMPLE_PATH=/sdg/lib/DES_KITS_CDs/CD40/mentor/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware/st
+      AMPLE_PATH=$AMPLE_PATH:~/mgc/userware
+      export SETUP=CD40DK
+      ;;
+
+   tij25)
+      AMPLE_PATH=/sdg/lib/tij25/mentor/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware/st
+      AMPLE_PATH=$AMPLE_PATH:~/mgc/userware
+      export SETUP=TIJ25
+      ;;
+
+   generic)
+      MGC_LOCATION_MAP=/sdg/mgc/LOCATION_MAP_MIN
+      AMPLE_PATH=/sdg/mgc/userware
+      AMPLE_PATH=$AMPLE_PATH:~/mgc/userware
+      ;;
+
+   sfx |\
+   hv05)
+      AMPLE_PATH=/sdg/lib/hv05ta/design_kit/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware
+      AMPLE_PATH=$AMPLE_PATH:~/mgc/userware
+      process='hv05'
+      export SETUP=HV05DK
+      ;;
+
+   cd40l)
+      AMPLE_PATH=/sdg/lib/cd40l/design_kit/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware
+      AMPLE_PATH=$AMPLE_PATH:~/mgc/userware
+
+      MGC_CALIBRE_LVS_RUNSET_FILE=${RUNSETS}/cd40l.calibre.lvs.runset
+      MGC_CALIBRE_DRC_RUNSET_FILE=${RUNSETS}/cd40l.calibre.drc.runset
+      MGC_CALIBRE_PEX_RUNSET_FILE=${RUNSETS}/cd40l.calibre.pex.runset
+      export SETUP=CD40L_DK
+      ;;
+
+   tsmc35)
+      export MGC_DESIGN_KIT="/tsmc/lib/tsmc035"
+      AMPLE_PATH=/sdg/mgc/userware
+      AMPLE_PATH=$AMPLE_PATH:$MGC_DESIGN_KIT/userware
+      export MGC_LOCATION_MAP=$MGC_DESIGN_KIT/mgc_location_map
+      export SETUP=TSMC35
+      ;;
+
+   brg)
+      export MGC_DESIGN_KIT="/sdg/lib/brg"
+      AMPLE_PATH=$MGC_DESIGN_KIT/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware
+      AMPLE_PATH=$AMPLE_PATH:~/mgc/userware
+      export SETUP=BRG_DK
+      ;;
+
+   old)
+      MGC_HOME=/idea
+      AMPLE_PATH=/sdg/lib/DES_KITS_CDs/CD40/mentor/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware
+      AMPLE_PATH=$AMPLE_PATH:/sdg/mgc/userware/st
+      export SETUP=CD40DK
+      echo 'FRONT PATH /idea2/bin'
+      ;;
+
+   *)
+      echo "$progname: No such process '$process'" 1>&2
+      exit 1
+      ;;
+esac
+echo "ECHO Setting up Mentor environment for $process"
+
+# Special hook for TSMC kit
+if [ $process = "tsmc35" ]; then
+    echo "ECHO Warning: You must belong to the UNIX 'tsmc' group for this setup to be functional"
+fi
+
+echo 'UNIQ AMPLE_PATH'
+
+# Remove the old stale stuff from the path
+echo "PURGE PATH $CALIBRE_HOME"
+echo "PURGE PATH $MGC_HOME"
+echo 'PURGE PATH /idea'
+
+# The $MGC_HOME/bin directory needs to go after the AMS directories
+# due to a weirdness in where AMS finds gcc
+# Obviously, won't work for Linux.  Solve later...
+echo "AFTER PATH /usr/local/bin ${MGC_HOME}/bin"
+echo "AFTER PATH /usr/local/bin ${CALIBRE_HOME}/bin"
+echo 'BACK PATH /sdg/bin'
+echo 'BACK PATH /com/dtig/bin'
+echo 'BACK PATH /noa/bin'
+echo 'UNIQ PATH'
+
+if [[ -d $MGC_AMS_HOME/compat ]] ; then
+   [[ -f ${MGC_AMS_HOME}/compat/init_mgc_ams_home.ksh ]]  &&
+       . ${MGC_AMS_HOME}/compat/init_mgc_ams_home.ksh 2>/dev/null
+else
+   [[ -f ${MGC_AMS_HOME}/com/init_mgc_ams_home.ksh ]]  &&
+       . ${MGC_AMS_HOME}/com/init_mgc_ams_home.ksh 2>/dev/null
+fi
+
+# Add in the /noa design management function and path
+
+if [[ -d /noa/bin ]] ; then
+   [[ -f /noa/bin/bcd.function ]] &&
+	. /noa/bin/bcd.function 2>/dev/null
+fi
+
+# first need to check if the env has LM_LICENSE_FILE or MGLS_LICENSE_FILE set
+# to a hard file path instead of a machine@port.  If it is a file then purge
+# the variable and reset it for Mentor.  Also trigger a warning.
+# Awkward ! string != pattern used as synonym for == for portability
+if [[ ! ($LM_LICENSE_FILE != */idea/pkgs*) ]] ; then
+
+    # Warning:  Filename version of LM_LICENSE_FILE found.  Resetting
+    bad=$(echo $LM_LICENSE_FILE | tr ':' '\012' | grep '/idea/pkgs')
+    echo "ECHO LM_LICENSE_FILE contains old style element: $bad"
+    echo "PURGE LM_LICENSE_FILE $bad"
+fi
+
+# Special hook for ams2006.2
+if [ "$AMS_REL" = "ams2006.2a" ]; then
+    echo "PURGE PATH $AMS_LATEST"
+    echo "BACK PATH ${MGC_AMS_HOME}/modelsim/v6.2d/bin"
+fi
+
+# Awkward ! string != pattern used as synonym for == for portability
+if [[ ! ($MGLS_LICENSE_FILE != */idea/etc*) ]] ; then
+
+    # Warning:  Filename version of MGLS_LICENSE_FILE found.  Resetting
+    bad=$(echo $MGLS_LICENSE_FILE | tr ':' '\012' | grep '/idea/etc')
+    echo "ECHO MGLS_LICENSE_FILE contains old style element: $bad"
+    echo "PURGE MGLS_LICENSE_FILE $bad"
+fi
+
+unset MGC_ALL_LICENSES_AVAILABLE
+unset GLOBAL_WAN_LICENSES
+
+if [ -n "$LOCAL_WAN_LICENSES" ]
+then
+   echo 'BACK MGLS_LICENSE_FILE 1717@hpcvimd4.cv.hp.com'
+   echo "ECHO Using old local license server: $MGLS_LICENSE_FILE"
+else
+   export MGC_ALL_LICENSES_AVAILABLE=true
+   export MGLS_LICENSE_FILE="1717@eda-wwan1.cca.cpqcorp.net,1717@eda-wwan2.cca.cpqcorp.net,1717@eda-wwan3.cca.cpqcorp.net"
+fi
+echo 'UNIQ MGLS_LICENSE_FILE'
+
+# This variable makes Calibre save ALL runset settings
+export MGC_CALIBRE_SAVE_ALL_RUNSET_VALUES=1
+
+# Export the variables we want to show up in the user's environment
+export X11DD_NAMED_COLORMAP MGC_HOME LM_LICENSE_FILE
+export MGLS_LICENSE_FILE MGC_DEFAULT_PRINTER_NAME MGC_LOCATION_MAP
+export AMPLE_PATH EL_LIBRARY_PATH SETUP PATH
+export MGC_IC_GENERIC_LIB MGC_IC_SOURCES_LIB MGC_IC_DEVICE_LIB MGC_IC_COMMLIB
+export MGC_IC_COMMLIB_QS MGC_MACROLIB NCF_GLOBAL
+export MGC_CALIBRE_LVS_RUNSET_FILE MGC_CALIBRE_DRC_RUNSET_FILE
+export MGC_CALIBRE_PEX_RUNSET_FILE
+export CALIBRE_HOME MGC_AMS_HOME
+
+# Hook to fix a defect in the HPUX install of ams2005.3
+# Awkward ! string != pattern used as synonym for == for portability
+if [[ ! ($OS != 'hpux')  ]] ; then
+    echo "ECHO hpux fixups and anacad setup..."
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$MGC_AMS_HOME/modelsim/v6.1e/modeltech/hp700/tkdnd
+    export SHLIB_PATH=$LD_LIBRARY_PATH
+    export anacad=$MGC_AMS_HOME
+    [[ -f $anacad/compat/init_anacad.ksh ]] &&
+       . $anacad/compat/init_anacad.ksh
+fi
+
+# Dump the environment for envy(1)
+exec '/usr/bin/env'

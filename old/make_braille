@@ -1,0 +1,534 @@
+#!/bin/ksh
+###############################################################################
+#
+# File:         make_brialle
+# RCS:          $Header:$
+# Description:  Script to create the M5 braille data
+# Author:       Floyd Moore
+# Created:      Tue Mar 10 13:57:59 MST 1998
+# Language:     Indented Text
+# Package:      N/A
+# Status:       Experimental (Do Not Distribute)
+#
+# (C) Copyright 1998, Hewlett-Packard ESL, all rights reserved.
+#
+###############################################################################
+#
+#  Make the braille using a predefined set of rules.
+#  The braille flow will be:
+#  1 - Verify that the block exists and has artwork.
+#  2 - Verify that gds exists for the source block.
+#      Note here we can force the script to use a specific gds file
+#      for example for the CUDA1 level which is too large to braille
+#      in one pass.
+#  3 - Check if the implied braille device exists (could give an option
+#      to specify the braille output rep).  If it does check if the
+#      rep is writable and verify we can overwrite it.
+#  4 - Create the target braille block and:
+#      a - create the cmdrc_i856 directory and copy the gds to target
+#      b - create a braille_i856 directory and copy the braille scripts
+#  5 - Configure the braille scripts (.hdr file)
+#  6 - Launch the p856db scripts (either locally or via Tbroker).
+#  7 - Check the integrity of the output gds.
+#  8 - convert the gds to a piglet.arc
+#  9 - retrieve the device.
+# 10 - add the property tags:
+#      add N1030 :F5 "AUTOPROMOTE=FALSE" 0,0;
+#      add N1030 :F5 "COMPARE=THROW" 0,10;
+# 11 - Run the drc_braille script  
+#
+#
+program=`basename $0`
+usage()
+{
+	echo "make_braille <blockname>"
+        echo "  -g <gds_file>"
+        echo "  -b <braille_blockname>"
+        echo "  -r <release>"
+	exit 1
+}
+
+PATH=$PATH:$CBROOT/lib/util 	# Just in case
+SCRIPTPATH="$SCRIPTPATH:/nfs/hpesctr/mnt/trdb1/cuda/scripts"
+
+verbose=0
+use_file=0
+braille_block=""
+let braille_release=1
+let cleanup=0
+let overwrite=0
+
+if [ $1 = "-OVERWRITE" ]
+then
+   let overwrite=1
+   shift
+fi
+
+#set -- `getopt "g:b:r:cvx" $*`
+
+for OPT in $*
+do
+   case $OPT in
+     -g) use_file=1
+         shift;
+         gds_file=$1
+         shift;;
+     -c) cleanup=1
+         shift;;
+     -b) shift;
+         braille_block=$1
+         shift;;
+     -r) shift;
+         let braille_release=$1
+         shift;;
+     -v) verbose=1
+         shift;;
+     -x) set -x;
+         shift;;
+     --) shift
+         break;;
+     -*) shift;
+         usage;  exit -1
+         break
+         ;;
+   esac
+done
+
+##
+## check the block.
+##
+blockname=$1
+blockpath=`get_dir $blockname`
+if [ -z "$blockpath" ]
+then
+   echo "Cannot locate block $block in blockpath"
+   exit -1
+fi
+if [ ! -d "$blockpath/art_i856" ]
+then
+   echo "Cannot locate artwork for block: $block"
+   exit -1
+fi
+
+if [ -z "${braille_block}" ]
+then
+   braille_block=${blockname}_br${braille_release}
+   braille_path=`get_dir ${braille_block}`
+   if [ -z "${braille_path}" ]
+   then
+      braille_path=$DEFAULT_PATH/${braille_block}
+   fi
+   echo "Implying the braille blockname: ${braille_block}"
+
+else
+   check=`echo ${braille_block} | awk '{print substr($0,1,1)}' -`
+   if [ $check = "/" ]
+   then
+      echo "braille block is along an absolute path... good."
+      braille_path=${braille_block}
+      braille_block=${braille_path##*/}
+   else
+      echo "looking up braille block in blockpath"
+      braille_path=`get_dir ${braille_block}`
+   fi
+   if [ -z ${braille_path} ]
+   then
+      echo "Can't find braille block...  Creating in the $DEFAULT_PATH"
+      braille_path=$DEFAULT_PATH/${braille_block}
+   fi
+fi
+
+if [ $cleanup -eq 1 -a -d ${braille_path} ]
+then
+   echo "Cleaning out old braille block: ${braille_path}"
+   rm -rf ${braille_path:?}
+fi
+
+if [ -d ${braille_path} ]
+then
+   echo "Braille block already exists..."
+   if [ -d ${braille_path}/art_i856 -a -f ${braille_path}/art_i856 -a \
+        ! -w ${braille_path}/art_i856/piglet.db ]
+   then
+      echo " but the piglet.db for the braille artwork is not writable!"
+      exit -1
+   fi
+   if [ $overwrite -eq 0 ]
+   then
+      echo "Do you really want to overwrite this block?"
+      echo "  use the -OVERWRITE flag as the first option to force"
+      exit -1
+   fi
+fi
+
+##
+## Verify the gds is valid that we are using as source
+##
+if [ $use_file -eq 1 ]
+then
+   echo "Using gds: $gds_file"
+else
+   echo "Using block's gds.hier file"
+   gds_file=${blockpath}/cmdrc_i856/gds.hier
+fi
+
+if [ ! -r $gds_file ]
+then
+   echo "Cannot locate source gds file specified"
+   exit -1
+fi
+
+stat=`ll $gds_file`
+let size=`echo $stat | awk '{print $5}' -`
+if [ $size -gt 20000000 ]
+then
+   echo "the gds is very large ($size).  Are you sure?"
+   exit -1
+fi
+
+if [ -d ${blockpath}/art_i856 -a -f ${blockpath}/art_i856/piglet.db ]
+then
+   times=`find ${blockpath}/art_i856/piglet.db -newer $gds_file -print | wc -l`
+   if [ $times -ne 0 ]
+   then
+     echo "Block's art_i856/piglet.db is newer than $gds_file. "
+     echo "  gds is probably out-of-date."
+     exit -1
+   fi
+fi
+
+
+##
+## Build the target block in the $DEFALT_PATH
+##
+
+echo "Building the braille block: ${braille_path}"
+if [ ! -d ${braille_path} ]
+then
+   mkdir ${braille_path}
+   if [ $? -ne 0 ]
+   then
+      echo "Mkdir of braille_block failed"
+      exit -1
+   fi
+else
+   rm -rf ${braille_path}/encap*
+   rm -rf ${braille_path}/error*
+   rm -f ${braille_path}/art_$ICPROCESS/tran*
+fi
+
+##################
+#  Verify the date of the gds data
+#
+times=1
+if [ -d ${braille_path}/cmdrc_i856 -a -f ${braille_path}/cmdrc_i856/gds.hier_braille_src ]
+then
+   cmptest=`cmp $gds_file ${braille_path}/cmdrc_i856/gds.hier_braille_src`
+   if [ -n "$cmptest" ]
+   then
+     echo "Source GDS is diferent than the braille source gds"
+     times=1
+   else 
+     times=0
+   fi
+fi
+
+if [ $times -ne 0 ]
+then
+   if [ ! -d ${braille_path}/cmdrc_i856 ]
+   then
+      mkdir ${braille_path}/cmdrc_i856
+      if [ $? -ne 0 ]
+      then
+         echo "Mkdir of braille_block cmdrc_i856 failed"
+         exit -1
+      fi
+   else
+      rm ${braille_path}/cmdrc_i856/* 
+   fi
+   cp $gds_file ${braille_path}/cmdrc_i856/gds.hier_braille_src
+   gds_file=${braille_path}/cmdrc_i856/gds.hier_braille_src
+   
+   #
+   #  Need to massage the gds data to get the topcell name to uppercase.
+   #
+   cd ${braille_path}/cmdrc_i856
+   gds2asc -h $gds_file > hier.out
+   topcell=`egrep "^[a-zA-Z0-9_]*:" hier.out | tail -1 | cut -d: -f1`
+   echo "Top cell is: $topcell"
+   up_topcell=`echo $topcell | tr "a-z" "A-Z"`
+   if [ $topcell = $up_topcell ]
+   then
+      echo "Name is already OK for vericheck"
+   else
+      echo "  new name is: $up_topcell"
+      echo "RENAME $topcell $up_topcell" > rename.in
+      gds_cut -m rename.in < $gds_file > tmp.gds
+      mv tmp.gds $gds_file
+      rm rename.in
+   fi
+else
+   echo "GDS file is OK"
+   cd ${braille_path}/cmdrc_i856
+   gds_file=${braille_path}/cmdrc_i856/gds.hier_braille_src
+   gds2asc -h $gds_file > hier.out
+   topcell=`egrep "^:*" hier.out | tail -1 | cut -d: -f1`
+   echo "Top cell is: $topcell"
+   up_topcell=`echo $topcell | tr "a-z" "A-Z"`
+   if [ ! $topcell = $up_topcell ]
+   then
+      echo "Name is not correct for Vericheck script usage:"
+      echo "   $topcell <=> $up_topcell"
+      exit -1
+   fi
+fi
+
+####################
+# Check the bralle data to see if it is in date
+if [ -d ${braille_path}/braille_i856 -a -f ${braille_path}/braille_i856/testchip_out ]
+then
+   times=`find $gds_file -newer ${braille_path}/braille_i856/testchip_out -print | wc -l`
+   if [ $times -ne 0 ]
+   then
+      echo "Existing testchip_out is out of date w.r.t. gds"
+   else
+      times=`find ${braille_path}/braille_i856 -newer ${braille_path}/braille_i856/testchip_out -print | egrep -v "piglet.arc" | wc -l`
+      if [ $times -ne 0 ]
+      then
+         echo "Existing testchip_out is out-of-date w.r.t. braille directory"
+         find ${braille_path}/braille_i856 -newer ${braille_path}/braille_i856/testchip_out -print
+      fi
+   fi
+else
+   times=1
+fi
+
+if [ $times -ne 0 ]
+then
+   if [ ! -d ${braille_path}/braille_i856 ]
+   then
+      mkdir ${braille_path}/braille_i856
+      if [ $? -ne 0 ]
+      then
+         echo "Mkdir of braille_block braille_i856 failed"
+         exit -1
+      fi
+   fi
+
+   cd ${braille_path}/braille_i856
+   if [ $? -ne 0 ]
+   then
+      echo "Cannot cd to braille directory?"
+      exit -1
+   fi
+   pwd
+   gzip -cd /cuda/misc/braille.tgz | tar xf -
+
+   echo "Creating the header file: ${topcell}.hdr ..."
+   cat >${topcell}.hdr << EOF 
+
+HEADER {
+ FORMAT          = STREAM
+ OUTPUT_FORMAT   = STREAM
+ VERICHECK_OUT   = mask_syn
+ GROUP_DIR       = group
+
+ INLIB           = $gds_file
+ BLOCK           = $up_topcell
+ OUTLIB          = testchip_out
+}
+
+OPTIONS{
+ ERR_PREFIX = err
+ FLAT_ERROR = TRUE
+}
+
+EOF
+
+   export ISSRUNSETS="${braille_path}/braille_i856"
+   export PATH=$ISSRUNSETS:$PATH
+
+   braille_rules=/nfs/hpesctr/mnt/trdb1/cuda/misc/braille/cuda1_rules
+   echo "Copying in the braille design rules from: $braille_rules"
+   cp $braille_rules ${topcell}.braille
+
+   ############
+   #
+   #  Run the vericheck to create the braille gds file
+   #
+
+   rm -f testchip_out
+   machine=`uname -n`
+   driver="/nfs/${machine}/tmp/braille.driver"
+
+   echo "Creating the Vericheck Tsub driver file..."
+
+   echo "echo Tsub braille driver file" > $driver
+   echo "uname -a " >> $driver
+   echo "export ISSRUNSETS='${braille_path}/braille_i856'" >> $driver
+   echo 'export PATH=$ISSRUNSETS:$PATH' >> $driver
+   echo "whence p856db" >> $driver
+   echo "cd ${braille_path}/braille_i856" >> $driver
+   echo "./p856db -m all -h ${topcell}.hdr -c $up_topcell -v ${topcell}" >> $driver
+
+   chmod 777 $driver
+   if [ $? -ne 0 ]
+   then
+      echo "Couldn't chmod the Tsub driver file: $driver\n";
+      exit -1
+   fi
+
+   ###############
+   # Launch the Vericheck Job
+   #
+
+   echo "Launching the Vericheck run to Taskbroker..."
+   if [ `uname -n` = "hpesctr" ]
+   then
+      echo "   launching locally..."
+      ksh $driver > tsub.out 2>&1
+   else
+      Tsub -w -pm 750+ -gc 'OPEN_MAX>1023' -t "VCDRC Braille run" $driver > tsub.out 2>&1
+   fi
+   if [ $? -ne 0 ]
+   then
+      echo "Tsub job failed!"
+      exit -1
+   fi
+
+   if [ ! -s testchip_out ]
+   then
+      echo "GDS output from Vericheck run is not valid"
+      echo "  review the summary file for any problems."
+      exit 1
+   fi
+
+   rm -f $driver
+
+   touch testchip_out
+else
+   echo "Generated GDS from Vericheck is still OK"
+fi
+
+#########
+#
+#   Convert the gds output from the vericheck run into a piglet.arc
+#
+   cd ${braille_path}/braille_i856
+   echo "Converting Vericheck output to piglet..."
+   gds2pig -n -l $CBROOT/esl/i856/etc/gds2pig.map.p856 -s br_${up_topcell} testchip_out > piglet.arc
+
+#########
+#  Filter piglet.arc to add the property test strings and to rename the
+#  block to point to the correct braille block.
+#
+#  Also remember that the gds2pig output does NOT include the FILES statement
+#  which could cause a data overwrite if not cleaned up before.
+#
+
+echo "   filtering piglet.arc"
+if [ -f piglet.arc ]
+then
+   cp piglet.arc piglet.arc_orig
+fi
+echo "s/br_${up_topcell}/${braille_block}/" > sed.in
+sed -f sed.in piglet.arc > tmp
+let line=`grep -in "^ADD" tmp | cut -d: -f1`
+let line=${line}-1
+if [ $line -eq 0 ]
+then
+   echo "Invalid line specification extracted from the piglet.arc"
+   exit -1
+fi
+head -${line} tmp > tmp2
+echo "add N1030 :F20 'AUTOPROMOTE=FALSE' 0,0;" >> tmp2
+echo "add N1030 :F20 'COMPARE=THROW' 0,10;" >> tmp2
+let line=${line}+1
+tail +${line} tmp >> tmp2
+mv tmp2 piglet.arc
+rm -f tmp sed.in
+
+#########
+#
+#  Bring filtered archive into piglet and create braille artwork rep.
+#
+
+cd ${braille_path}
+if [ ! -d art_i856 ]
+then
+   mkdir art_i856
+   if [ $? -ne 0 ]
+   then
+      echo "Cannot create artwork directory"
+   fi
+   cd art_i856
+else
+   cd art_i856
+   if [ -f piglet.db ]
+   then
+      echo "Cleaning out old piglet rep."
+      rm -f piglet.db ../bm.db tran*
+   fi
+fi
+
+cp ${braille_path}/braille_i856/piglet.arc ${braille_path}/art_i856/piglet.arc
+
+times=1
+if [ $times -ne 0 ]
+then
+   echo "Creating Smashed archive in piglet..."
+   PIGDIR=$CBROOT/$ICPROCESS/piglet
+   rep_suffix="_$ICPROCESS"
+
+   SB_OUTDEV=""
+   logfile="/tmp/piglet_log$$"
+   PIG_ENV=$PIGDIR/artrc
+   export PIG_ENV SB_OUTDEV
+
+   cmdfile=/tmp/arccmd$$
+
+cat > $cmdfile << %%
+INP ${braille_path}/art_$ICPROCESS/piglet.arc ;
+edit ${braille_block}A;
+sav;
+EXIT;
+BYE;
+%%
+
+   piglet < $cmdfile > $logfile
+
+   if [ ! -f ${braille_path}/art_$ICPROCESS/piglet.db ]
+   then
+       echo Piget input of braille archive failed >&2
+       cat $logfile
+       cat $cmdfile
+       rm -f $logfile $cmdfile
+       exit 1
+   else
+       rm -f $logfile $cmdfile
+   fi
+fi
+
+###############
+# Update the drc/trantor files
+#
+
+if [ ! -f ${braille_path}/art_i856/piglet.db ]
+then
+   echo "Cannot find braille piglet.db after retrieve step"
+   exit
+fi
+
+make_drc ${braille_block}
+if [ $? -ne 0 ]
+then
+   echo "Braille block fails DRC" 
+   exit -1
+fi
+
+############
+# Cleanup
+#
+
+echo "Creation of Braille rep complete."
+exit 0

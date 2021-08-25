@@ -1,0 +1,59 @@
+#!/bin/ksh
+block=$1
+. pcxu_bp 3.0
+blockpath=`get_dir $block`
+echo "Checking udb3..."
+if [ -z "$blockpath" ]
+then
+   echo "Cannot locate block $block"
+   exit -1
+fi
+if [ ! -d $blockpath ]
+then
+   echo "Cannot locate blocks directory $blockpath"
+   exit -1
+fi
+if [ ! -f $blockpath/waiver_history ]
+then
+   echo "Block $block is not waivered"
+   exit -1
+fi
+if [ ! -f $blockpath/error_bicmos14/piglet.arc ]
+then
+   echo "Block $block does not have a drc errors file"
+   exit -1
+fi
+
+. /nfsusers/pcxu/bin/pcxu14
+utr_blockpath=`get_dir $block`
+echo "Checking utr..."
+if [ -z "$utr_blockpath" ]
+then
+   echo "Cannot locate block on utr $block"
+   . pcxu_bp 3.0
+   exit -1
+fi
+if [ ! -d $utr_blockpath ]
+then
+   echo "Cannot locate blocks utr directory $utr_blockpath"
+   . pcxu_bp 3.0
+   exit -1
+fi
+if [ ! -f $utr_blockpath/waiver_history ]
+then
+   echo "Block $block is not waivered on TR server"
+   . pcxu_bp 3.0
+   exit -1
+fi
+if [ ! -f $utr_blockpath/error_bicmos14/piglet.arc ]
+then
+   echo "Block $block does not have a drc errors file on TR server"
+   . pcxu_bp 3.0
+   exit -1
+fi
+
+diff $blockpath/error_bicmos14/piglet.arc $utr_blockpath/error_bicmos14/piglet.arc
+
+
+. pcxu_bp 3.0
+

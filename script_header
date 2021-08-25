@@ -1,0 +1,120 @@
+#!/bin/ksh
+# Name:     <script name>
+# Version:  $Header:$
+# Date:     <creation date>
+# Author:   Floyd Moore
+#
+# Synopsis: <description>
+#
+# Usage:    <simple usage message>
+#####################################
+#
+
+version_string='Version: \$Revision:\$'
+
+usage()
+{
+   echo "Usage: $0 {options...} <blockname>"
+   echo $version_string
+   echo
+   exit 1
+}
+
+########################
+# Define KSH functions #
+########################
+
+function parse_options
+{
+   echo $@ | tr -s " *" "\012" |
+   while read -r option
+   do
+      if [ $debug -eq 1 ]
+      then
+         echo "Processing Option: '$option'"
+      fi
+      case $option in
+      -x)          echo "Debug mode on"; debug=1;;
+
+      -V)          echo $version_string; 
+                   exit 1
+                   ;;
+
+      -v)          verbose=1;;
+
+      -?)          usage;;
+
+      -help)	   usage;;
+
+      -*)          echo "Invalid Argument: $option";   usage;;
+
+       *)          blockname=${option};;
+      esac
+   done
+   if [ $? -ne 0 ]
+   then
+     exit 1
+   fi
+}
+
+function clean_exit
+{
+   echo "Trapping on exit condition... exitting."
+   exit -1
+}
+
+##########################################
+#     Parse Arguements from command line #
+##########################################
+
+export MGC_WD=`pwd`
+
+# Check that $MGC_HOME is set
+
+if [ x"$MGC_HOME" = "x" ]
+then
+   echo "Program aborting, \$MGC_HOME must be set to execute properly"
+   exit 1
+fi
+
+# Check that $MGC_HOME is set correctly and that ic is available.
+
+if [ ! -x $MGC_HOME/bin/ic ]
+then
+   echo "Program aborting, either \$MGC_HOME not set correctly or ic doesn't exist."
+   exit 2
+fi
+
+let run_errors=0
+trap "clean_exit" QUIT
+trap "clean_exit" HUP
+trap "clean_exit" TERM
+trap "clean_exit" INT
+
+if [ $# -eq 0 ] 
+then
+   usage
+   exit 1
+fi
+
+# set globals
+let debug=0
+let verbose=0
+user=`whoami`
+mtype=`uname -a | cut -d" " -f5`
+
+if [ $1 = "-?" -o $1 = "-help" ]
+then
+   usage;
+   terminate 1
+fi
+
+parse_options $@
+
+script=`basename $0`
+
+echo "$script $blockname ..."
+echo "   $version_string"
+echo "   Mentor Working Directory=${MGC_WD}"
+echo "---------------------------------"
+

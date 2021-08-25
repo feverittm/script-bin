@@ -1,0 +1,10 @@
+#!/bin/ksh
+
+# Purpose:  Run v2lvs to prepare a spice netlist for Calibre LVS
+
+v2lvs -v ramtop.gates.v -l port.v -s library.spi -i -o ramtop.spi -s0 GND -s1 VDD
+
+	
+
+
+

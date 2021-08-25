@@ -1,0 +1,32 @@
+#!/bin/ksh
+#echo "Path=$PATH"
+newpath=`echo $PATH | tr ":" "\012" | egrep -v "\/apps" | tr "\012" ":"`
+PATH=$newpath
+newmanpath=`echo $MANPATH | tr ":" "\012" | egrep -v "\/apps" | tr "\012" ":"`
+if [ -z $newmanpath ]
+then
+   unset MANPATH
+else
+   MANPATH=$newmanpath
+fi
+newlibpath=`echo $LD_LIBRARY_PATH | tr ":" "\012" | egrep -v "\/apps" | tr "\012" ":"`
+if [ -z $newlibpath ]
+then
+   unset LD_LIBRARY_PATH
+else
+   LD_LIBRARY=$newlibpath
+fi
+unset OLDPWD
+unset MGC_LOCATION_MAP
+unset MGC_MACROLIB
+unset MGC_IC_DEVICE_LIB
+unset MGC_DEFAULT_PRINTER_NAME
+unset MGC_IC_GENERIC_LIB
+unset MGC_IC_COMMLIB
+unset MGC_HOME
+unset MGC_AMS_HOME
+unset MGC_IC_SOURCES_LIB
+unset AMS_ENV_VAR1
+unset HSPICE_VER
+unset HSPICE_ROOT
+unset LM_LICENSE_FILE 

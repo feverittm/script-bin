@@ -1,0 +1,143 @@
+###############################################################################
+#
+# File:         make_chipid
+# RCS:          $Header:$
+# Description:  Create/Fix the chipid block for cuda.
+# Author:       Floyd Moore
+# Created:	Wed Aug 20 11:17:43 MDT 1997
+# Modified:     
+# Language:     Indented Text
+# Package:      N/A
+# Status:       Experimental (Do Not Distribute)
+#
+# (C) Copyright 1997, Hewlett-Packard ESL, all rights reserved.
+#
+###############################################################################
+
+program=`basename $0`
+usage()
+{
+	echo "Usage: ${program}" >&2
+	exit 2
+}
+
+PATH=$PATH:$CBROOT/lib/util			# Just in case
+block=""
+
+for opt in $*
+do
+	case $1 in
+	  -x) debug="set -x"; shift;;
+	  --) shift; break;;
+	  -*) usage; shift;;
+	esac
+done
+
+echo "$0:"
+echo "Doing some preliminary checks..."
+block=chpid_idnum0
+scale=1
+clean=0
+
+blockpath=`get_dir $block`
+if [ -z "$blockpath" ]
+then
+   echo "Bad blockname: $block"
+   exit
+fi
+
+cd $blockpath
+
+if [ ! -d art_$ICPROCESS ] 
+then 
+   exit
+fi
+
+cd art_$ICPROCESS
+
+if [ ! -f piglet.db ]
+then
+   echo "Block does not have a piglet.db available"
+   exit 1
+else
+   # for testing make the archive copy identified as coming from this 
+   # process
+   cp piglet.db piglet.db_save.$$
+fi
+
+if [ -f trantor.db ]
+then
+   # Differ to the piglet.db and recreate the trantor.db
+   rm -f tran_src_time
+   rm -f trantor.db
+fi
+
+if [ -w ../revision.def ]
+then
+   echo "Revision definition file is writable.  Please 'ci' the file"
+   exit -1
+fi
+
+## create a new archive of the block for reference
+art_archive $blockpath
+if [ $? -ne 0 ]
+then
+   echo "Art archive failed!"
+   exit -1
+fi
+
+archive="${blockpath}/art_$ICPROCESS/piglet.arc"
+if [ ! -r $archive ]
+then
+   echo "Cannot read archive of block: $archive"
+   exit -1
+fi
+
+grep -i "Rev" $archive > ${blockpath}/art_$ICPROCESS/rev_archive.$$
+echo "Extracted revision information:"
+cat ${blockpath}/art_$ICPROCESS/rev_archive.$$
+
+if [ ! -s ${blockpath}/art_$ICPROCESS/rev_archive.$$ ]
+then
+   echo "Could not extract the revision information from the archive"
+   exit -1
+fi
+
+# Call a perl script which creates the numbers in an archive.
+echo "Running the perl script to get the archive of the revision numbers..."
+make_chipid_revision.pl
+if [ $? -ne 0 ]
+then
+   echo "Perl script failed!"
+   exit -1
+fi
+mv /tmp/work.arc ${archive}
+
+echo "Retrieving the block: ${blockpath}"
+art_retrieve -f ${blockpath}
+
+echo "Converting the block into trantor..."
+pig2tran -art $block
+if [ $? -ne 0 ]
+then
+   echo "Pig2tran failed"
+   exit 1
+fi
+
+script="/net/hpesfem/home/red/cuda/trantor/chpid.tran"
+#debug="set -x"
+
+echo "Calling trantor to run the fill script..."
+trantor -f -c "$debug;$script $block $clean $scale"
+if [ $? -ne 0 ]; then
+   echo "  make_chipid trantor failed."
+   exit 1
+fi
+
+echo "Converting the trantor.db back to piglet..."
+
+tran2pig -art $block
+
+exit 0
+
+echo "Done."

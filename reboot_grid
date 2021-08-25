@@ -1,0 +1,107 @@
+#!/bin/ksh
+# Name:     reboot_grid
+# Version:  $Header:$
+# Date:     Mon Apr  5 13:03:32 PDT 2004
+# Author:   Floyd Moore
+#
+# Synopsis: Script to administer the gridengine cluster.  Specifically
+#   when machines get and error state or have issues because the master
+#   server needs to be restarted, the entire cluster will need to be
+#   restarted.
+#
+# Usage:    reboot_grid 
+#####################################
+#
+
+version_string='Version: \$Revision:\$'
+
+usage()
+{
+   echo "Usage: $0 {options...} <blockname>"
+   echo $version_string
+   echo
+   exit 1
+}
+
+########################
+# Define KSH functions #
+########################
+
+function parse_options
+{
+for opt in $*
+do
+   if [ $debug -eq 1 ]
+   then
+      echo "Processing Option: '$option'"
+   fi
+   case "$1" in
+   -x)          echo "Debug mode on"; debug=1;;
+
+   -V)          echo $version_string; 
+                exit 1
+                ;;
+
+   -v)          verbose=1;;
+
+   -?)          usage;;
+
+   -help)	usage;;
+
+   -*)          echo "Invalid Argument: $option";   usage;;
+   esac
+done
+if [ $? -ne 0 ]
+then
+  exit 1
+fi
+}
+
+##########################################
+#     Parse Arguements from command line #
+##########################################
+
+# Check that $MGC_HOME is set
+
+if [ x"$SGE_ROOT" = "x" ]
+then
+   echo "Program aborting, \$SGE_ROOT must be set to execute properly"
+   exit 1
+fi
+
+# Check that $MGC_HOME is set correctly and that ic is available.
+
+if [ ! -d ${SGE_ROOT}/default/common ]
+then
+   echo "Program aborting, connot locate grid common files"
+   exit 2
+fi
+
+let run_errors=0
+
+if [ $# -eq 0 ] 
+then
+   usage
+   exit 1
+fi
+
+# set globals
+let debug=0
+let verbose=0
+user=`whoami`
+mtype=`uname -a | cut -d" " -f5`
+
+if [ $1 = "-?" -o $1 = "-help" ]
+then
+   usage;
+   terminate 1
+fi
+
+parse_options $@
+
+script=`basename $0`
+
+echo "$script $blockname ..."
+echo "   $version_string"
+echo "---------------------------------"
+

@@ -1,0 +1,51 @@
+function clear_env 
+{
+   #unset PATH
+   unset UE_SHOWTOP_IN_OLD
+   unset BLOCKPATH
+   unset DEFAULT_PATH
+   unset PRIMPATH
+   unset ICPROCESS
+   unset ARENA
+   unset CUBBY_DIR
+   unset CUBBY_TYPE
+   unset CUBBY_DIRS
+   unset CUBBY_TAG
+   unset TSUB_ENV
+   unset TSUB_ENV_OPT
+   unset CB_DBENV
+   unset UE_SHOWTOP_IN_OLD
+   unset SCRIPTPATH
+   unset CBROOT
+   unset SCIP_CONF
+
+   for e in `env | awk -F= '{print $1}' -`
+   do
+      if [ "${e}" == "PATH" -o "${e}" == "MANPATH" \
+            -o "${e}" == "SHELL" \
+            -o "${e}" == "HOME" \
+            -o "${e}" == "TERM" \
+            -o "${e}" == "TZ" \
+            -o "${e}" == "PS1" \
+         ]
+      then
+   	 continue
+      fi
+      echo "Unset ${e}"
+      unset ${e}
+   done
+
+   if [ `uname -n` == "hpesfem" ] 
+   then
+      export PATH=$PATH:"/users/red/bin"
+   else
+      export PATH=$PATH:"/nfs/hpesfem/users/red/bin"
+   fi
+}
+
+clear_env;
+unset  CADROOT
+unset  ESLROOT
+unset  BLOCKPATH
+
+set -o emacs

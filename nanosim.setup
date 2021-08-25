@@ -1,0 +1,41 @@
+#!/usr/bin/ksh
+
+# Purpose: Establish environment for running Synopsys Nanosim tool
+#          This script will only work when passed to the 'envy' utility
+#          as in:  
+#                    eval `envy nanosim.setup`
+#
+# $Header:$
+
+SYNOPROOT=/apps/synopsys   # Default location for all Synopsys tools
+
+# Only handle hp32 and linux binaries
+OS=`uname`
+case ${OS} in
+        Linux) platform=linux ;;
+        HP-UX) platform=hp32 ;;
+        *) echo "ERROR: Unsupported OS: $OS" >&2 ; exit 1 ;;
+esac
+
+NS_LATEST=ns_2004.12-SP1-ENG2  # Latest (default) version of Nanosim
+CS_LATEST=cscope_W-2004.12  # Latest (default) version of Nanosim
+LICENSE_PTR=27000@hpcvimd4
+
+# All tool versions will use user-assigned value if available
+: ${NSVER:=${NS_LATEST}}
+: ${CSVER:=${CS_LATEST}}
+
+# PATH/license settings. (Deal with pathmill/hspice binaries later)
+echo "PURGE PATH ${SYNOPROOT}"
+echo "AFTER PATH /usr/bin ${SYNOPROOT}/${NSVER}/${platform}/ns/bin"
+echo "AFTER PATH /usr/bin ${SYNOPROOT}/${CSVER}/ai_bin"
+echo "BACK LM_LICENSE_FILE ${LICENSE_PTR}"
+echo "UNIQ LM_LICENSE_FILE"
+
+echo "ECHO Setup Synopsys/Nanosim tools"
+
+# Export the variables we want to show up in the user's environment
+export SYNOPROOT
+
+# We're done.  Dump the environment to 'envy'
+exec '/usr/bin/env'

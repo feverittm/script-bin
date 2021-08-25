@@ -1,0 +1,26 @@
+#!/bin/sh
+
+
+ORGMAIL=/var/mail/$LOGNAME
+
+if cd /disc/home/red &&
+  test -s $ORGMAIL &&
+  lockfile -r0 -l3600 .newmail.lock 2>/dev/null
+then
+  echo "working on mail folder: $ORGMAIL"
+  ls -l $ORGMAIL
+  trap "rm -f .newmail.lock" 1 2 3 15
+  rm -f ~/.newmail
+  umask 077
+  lockfile -l3600 -ml
+  cat $ORGMAIL >>.newmail
+  lockfile -mu
+  ls -l .newmail
+  formail -s procmail <.newmail &&
+   rm -f .newmail
+  rm -f .newmail.lock
+else
+  echo "No mail"
+fi
+exit 0
+

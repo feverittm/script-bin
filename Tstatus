@@ -1,0 +1,360 @@
+#!/usr/local/bin/perl5 -w
+#
+#	$Header: /home/red/bin/Tstatus,v 1.5 1997/10/28 19:09:18 red Exp red $
+#
+#	"Qstatus" created by red
+#
+#	$Log: Tstatus,v $
+#	Revision 1.5  1997/10/28 19:09:18  red
+#	Added an option to specify the update time between 'tstat -v' runs
+#	Added An Icon name and widget title.
+#
+#	Revision 1.4  1997/10/23 23:00:03  red
+#	Additions by Bob Proulx for background operation and inproved options
+#	parsing.
+#
+#	Revision 1.3  1997/10/23 22:11:01  red
+#	Fixed the unitialized variable caused in $cmdline.
+#
+#	Revision 1.2  1997/04/14 17:46:52  red
+#	Working right now.
+#
+#	Revision 1.1  1997/04/12 18:56:49  red
+#	Initial revision
+#
+
+use strict;
+use English;
+use Tk;
+use Tk::Xrm;
+use Tk::DialogBox;
+use subs qw(handler show_usage update get_tstats cleanup_and_die);
+use POSIX qw(strftime);
+
+use vars qw($opt_e $opt_p $opt_u $opt_f $opt_n $opt_x $opt_r);
+use Getopt::Std;
+
+#-------------------------------------------------------------------
+# General Variables and runtime information.
+#-------------------------------------------------------------------
+
+use vars qw($update $header_string $Rev $RunDate $DirName $ProgName);
+use vars qw(@fields $job $status $queue $cmdline $label_string);
+use vars qw($QueueEmpty %Current %Queue @tinfo $machine @title);
+
+my $FONT = '-*-Helvetica-Medium-R-Normal--*-140-*-*-*-*-*-*';
+
+my $tlog = "/net/hpesfem/home/red/tbroker/quiddich.log";
+
+#Widgets
+use vars qw($main $top $ltop $tstats $header $w_update $w_quit $listbox);
+
+$RunDate = strftime '%Y/%m/%d %H:%M:%S', localtime;
+$Rev = (split(' ', '$Revision: 2 $', 3))[1];
+$0 =~ m!(.*)/!; $ProgName = $'; $DirName = $1; $DirName = '.' unless $DirName;
+
+$SIG{'HUP'} =   \&handler;
+$SIG{'INT'} =   \&handler;
+$SIG{'QUIT'} =  \&handler;
+$SIG{'TERM'} =  \&handler;
+
+#--------------------------------------------------------------
+# General utility subroutines
+#--------------------------------------------------------------
+sub handler
+{
+    my($sig) = @_;
+    warn "$ProgName:INFO: Caught a SIG$sig -- shutting down\n";
+
+    exit(0);
+}
+
+sub show_usage
+{
+   print "$ProgName:\n";
+   print "   Options:\n";
+   print "   -e           :  Enable extended queue tracking options\n";
+   print "     -p         :     enable pages.\n";
+   print "   -f           :  Run in foreground.\n";
+   print "   -u <update>  :  Update time in seconds (default is 1 sec).\n";
+   print "   -x           :  Verbose degug information.\n";
+   print "   -r [hostname]:  Show tstats from remote machine.  Note you\n";
+   print "                      must have remsh permission to this machine.\n";
+   print "   -n           :  Don't exit when all jobs are done.\n";
+   print "\n";
+   print "$ProgName  $Rev\t\t$RunDate\n\n";
+   print "  Put up a small xwindow log to show the status of running\n";
+   print "  Taskbroker jobs.\n";
+   print "  In the Tstatus window inputing:\n";
+   print "  Control-C  :  Exits the program.\n";
+   print "  Control-Q  :  Exits the program.\n";
+   print "  Control-U  :  Run a tstat and update immediately.\n";
+   print "\n";
+   exit 0;
+}
+
+
+sub cleanup_and_die {
+    my $msg=$_[0];
+    close(INFO);
+    die "$msg";
+}
+
+#----------------------------------------------------------------------------------
+# Main subroutine to run the 'tinfo' command and gather the information about the
+#   running jobs.
+#----------------------------------------------------------------------------------
+sub get_tstats {
+   my ($rest, $index, $save);
+   undef @tinfo;
+   if ($opt_r) {
+      open(INFO,"remsh $opt_r -n 'tinfo' |") 
+         || cleanup_and_die "Cannot open pipe to tinfo\n";
+   }
+   else {
+      open(INFO,"tinfo |") || cleanup_and_die "Cannot open pipe to tinfo\n";
+   }
+   $index=0;
+   $save="";
+   while(<INFO>){
+      chop;
+      /^\s*$/ && do { undef @tinfo; close(INFO); return; };
+      s/\s+/ /g;
+      s/(.*)\s+'(.*)'/$1/ && do {
+	  $save=$2;
+	  s/\'//g;
+	  s/\s/:/g;
+      };
+      $opt_x && print "Tinfo $.: $_\n";
+      $tinfo[$index]=$_;
+      $title[$index]=$save;
+      $index++;
+  }
+   close(INFO);
+}
+
+sub manage_queue {
+   my $message;
+
+   my $datestamp=`date +%m%d%YT%H%M%S`;
+
+   # remove completed jobs
+   for my $jkey (keys %Queue){
+      if($Queue{$jkey}->{Running}==1 && !exists($Current{$jkey})){
+         $message .= "Job Complete:\n";
+         $message .= "   ... removing completed job $jkey.\n";
+         $message .= "   ... command=$Queue{$jkey}->{Command}\n";
+         if (defined($opt_p)){
+            system "fcpager moore,floyd \"$message\"";
+         }
+         $Queue{$jkey}->{Running}=0;
+         $Queue{$jkey}->{Delete}=$datestamp;
+      }
+   }
+
+   for my $jkey (keys %Current){
+      if (exists $Queue{$jkey}){
+         $Queue{$jkey}->{Running}=1;
+         #$message .= "   ... job $job exists in queue leaving it there\n";
+      } else {
+         #insert into queue
+         #$message .= "   ... Insert job $jkey\n";
+         $Queue{$jkey}->{Running}=1;
+         $Queue{$jkey}->{Insert}=$datestamp;
+         $Queue{$jkey}->{Machine}=$Current{$jkey}->{Machine};
+         $Queue{$jkey}->{Command}=$Current{$jkey}->{Command};
+    
+         my $message_string = 
+            sprintf("%3s %-12s %-15s %-40s", $Queue{$jkey}->{Running}, 
+                                             $jkey,
+                                             $Queue{$jkey}->{Machine}, 
+                                             $Queue{$jkey}->{Command});
+         if (defined($ltop)){
+            $listbox->insert('end',$message_string);
+         }
+      }
+   }
+   if (defined($message)){
+      my $job_dialog = $top->DialogBox( -title     => 'Queue:',
+                                       -buttons   => ["OK"] );
+      $job_dialog->add("Label", -text => $message)->pack();
+      $job_dialog->Show;
+   }
+   if (!keys %Current){
+         $QueueEmpty=1;
+	 &exit unless (defined($opt_n));
+   }
+}
+
+sub update {
+
+    my($index);
+    # Update the counter every 1 second.
+
+    #$opt_x && print "Update...\n";
+    &get_tstats;
+    $index=0;
+    undef %Current;
+    if (defined(@tinfo)){
+       $label_string  = "";
+       for ($index=0;$index<=$#tinfo;++$index){
+	  $queue="";
+	  $job="";
+          my $stamp=`date`; chomp $stamp;
+	  undef ($machine);
+	  $cmdline=" ";
+          @fields=split(/:/,$tinfo[$index]);
+	  if ($fields[0] =~ /Q/){
+	      #queued task
+	      $queue=$fields[3] . " queue";
+	      $job=$fields[2];
+	      $cmdline="Submit " . $title[$index];
+	  }
+	  else {
+	      #running task
+	      #queued task
+	      $job=$fields[3];
+	      $queue=$fields[4];
+	      $machine=$fields[2];
+	      $cmdline="Run " . $title[$index];
+
+              my $user=(split(".",$job))[0];
+              $Current{$job}->{User}=$user;
+              $Current{$job}->{Machine}=$machine;
+              $Current{$job}->{Command}=$cmdline;
+              $Current{$job}->{Command}=~ s/^Run\s+//;
+	  }
+          $opt_x && print "Queue=$queue\n";
+	  $opt_x && $machine && print "Machine=$machine\n";
+          $opt_x && print "Job=$job\n";
+
+	  unless(defined($cmdline)) { $cmdline="-No Title-"; }
+	  if (length($cmdline) > 33 ){
+	      $cmdline=substr($cmdline,0,33);
+	      $cmdline .= "...";
+	  }
+	  if (length($queue) > 15 ){
+	      $cmdline=substr($cmdline,0,15);
+	  }
+	  $opt_x && print "Cmdline=$cmdline\n";
+
+
+	  if (defined($machine)){
+	      $label_string .= sprintf("%-12s %-15s %-40s\n", $job, $machine, $cmdline);
+	  }
+	  else {
+	      $label_string .= sprintf("%-12s %-15s %-40s\n", $job, $queue, $cmdline);
+	  }
+	  $opt_x && print "$label_string\n";
+      }
+   } else {
+	$label_string = "No Jobs";
+        $QueueEmpty=1;
+   }
+
+   if (defined($opt_e) && defined(@tinfo)){ manage_queue(); }
+
+   $top->after($update, \&update);
+} 
+
+#----------------------------------------------------------------------------------
+#
+#  Main program
+#
+
+#
+# parse options...
+#
+my @SAVEDARGV = @ARGV;
+if (&getopts('pefnxr:u:') == 0) {
+    &show_usage;
+}
+#print "# $ProgName  $Rev\t\t$RunDate\n\n";
+
+unless($opt_u){
+   $update=1000;
+} else {
+   if ( $opt_u !~ /\d+/ ){
+      die "Invalid number specified for the update time: $opt_u\n";
+      }
+   $update=int($opt_u*1000);
+   if ( $update == 0 ) { 
+      print "Bad update time conversion\n";
+   }
+   elsif ($update < 100) {
+      print "Setting update time to minimum of 0.1 seconds\n";
+      $update=100;
+      }
+   else {
+      print "Update time set at ",($update/1000)," seconds\n";
+      }
+}
+
+if (defined($opt_p) && !defined($opt_e)){
+   die "Page mode only available with extended option mode '-e'\n";
+}
+
+if (defined($opt_e)){
+   my $user=`whoami`;
+   chomp $user;
+   if ($user ne "red"){
+      print "   This option is experimental.  Please see Floyd Moore before\n";
+      print "   using it so I can gauge the need\n";
+      undef $opt_e;
+   } 
+}
+
+# get first update...
+undef $QueueEmpty;
+&get_tstats;
+unless (defined(@tinfo)) {
+   print "No Tasks Found\n";
+   }
+
+if (!defined($opt_f)) {
+    exec 'nohupd', '-n', $0, '-f', @SAVEDARGV;
+    die "$ProgName: Error: exec of \"nohupd\" failed: $!\n";
+}
+
+	
+$top = MainWindow->new;
+$top->bind('<Control-c>' => \&exit);
+$top->bind('<Control-q>' => \&exit);
+$top->bind('<Control-u>' => \&update);
+$top->title('Tstatus');
+$top->iconname('Tstatus');
+
+# Define the header
+$header_string  = sprintf("%-12s %-15s %-40s", "Which?", "Where?", "What?");
+$header = $top->Label(   -textvariable  => \$header_string,
+                         -relief        => 'groove')
+       ->pack(           -side          => 'top',  
+                         -fill          => 'y');
+$tstats = $top->Label(   -textvariable  => \$label_string)
+       ->pack(           -side => 'top',
+                         -fill => 'y');
+
+$w_update = $top->Button(-text       => 'Update',
+                         -command    => \&update)
+       ->pack(           -side       => 'left',
+                         -fill       => 'y',
+                         -expand     => 'y');
+$w_quit   = $top->Button(-text       => 'Quit',
+                         -command    => sub { exit(0); })
+       ->pack(           -side       => 'right',
+                         -fill       => 'y',
+                         -expand     => 'y');
+if (defined($opt_e)){
+   #create the listbox...
+   $ltop   = $top->Toplevel(); # create a new window
+   $ltop->title('Tbd History');
+   $listbox=$ltop->Scrolled('Listbox',
+                            "width"    => 60,
+                            "height"   =>  5,
+                            -scrollbars => 'se')
+                ->pack();
+}
+
+&update;
+
+MainLoop;

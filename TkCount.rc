@@ -1,0 +1,10 @@
+[Vacation Hours]
+message = "There are %dh days, and %hd hours left until vacation\n
+date = "6:30am December 29 2006"
+update = 30000
+
+[Vacation Days]
+message = "There are %dt days until we leave on vacation!"
+date = "6:30am December 29 2006"
+update = 1800
+

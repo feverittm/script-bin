@@ -1,0 +1,7 @@
+0e5a15afd4576d2c0f1fbfdd2a2a1179  /etc/rc.config.d/namesvrs
+331eb09e768c00fa1ec71607da6c391b  /etc/passwd
+3ce44cd9f19b9dc4bfeff57d5c235abe  /etc/rc.config.d/nfsconf
+66217a3d7bc33fbed76a35e7eee0cca2  /etc/nsswitch.conf
+cb8fbb22535422348cb68e4004ff0aa4  /etc/group
+e23eacb2976742d6d3170c7b671dac26  /etc/services
+f4f178a3741f95092ef9de472548ce65  /etc/shells

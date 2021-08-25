@@ -1,0 +1,16 @@
+// Output a graph identical to the input graph but with all the edges'
+// directions reversed.
+
+BEG_G {
+  graph_t g = graph( sprintf( "%s%s", $G.name, "_r" ), 'D' );
+  copyA( $G, g );
+}
+
+N { copy( g, $ ) }
+
+E {
+  edge_t e = edge( node(g,head.name), node(g,tail.name), name );
+  copyA( $, e );
+}
+
+END_G { $O = g }

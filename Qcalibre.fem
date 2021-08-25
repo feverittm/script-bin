@@ -1,0 +1,297 @@
+#!/bin/sh 
+# Name:     Qcalibre
+# Version:  $Header: /sdg/bin/RCS/Qcalibre,v 1.5 2005/09/06 21:24:17 red Exp red $
+# Date:     Tue Aug 23 09:31:53 PDT 2005
+# Author:   Floyd Moore
+#
+# Synopsis: Qcalibre - Launch a Calibre job to the Grid
+#
+# Usage:    Qcalibre
+#   <<< see the -h option >>>
+#
+# $Log: Qcalibre,v $
+# Revision 1.5  2005/09/06 21:24:17  red
+# Added more help text and a check clause to make sure that a user grid environemnt is setup.
+#
+# Revision 1.4  2005/08/25 19:46:05  red
+# Added a mechanism to identify which type of calibre job is requested and to
+# request the appropriate resource from the grid.
+# Also added code to make the '-l' option for Qsum transparent to Qcalibre and allow
+# resource tayloring for the job.
+#
+#   
+#      
+#####################################
+# SGE submission options
+# request "bin/sh" as shell for job
+#$ -S /bin/sh
+# export these env variables to the job shell
+#$ -v MGC_HOME,LM_LICENSE_FILE,CD40LVS,DRYETCH,LVSTEST,LVSTEXTMODE,LVS_INCLUDE_RC,SERIESRES,SPLITGROUND,DRCPAD,MEMSPAD
+# run in the current directory
+#$ -cwd
+# merge stderr/stdout
+#$ -j y
+# wait for job to complete before returnning to the shell
+#$ -sync y
+#
+#
+
+version_string='Version: \$Revision: 2 $'
+
+usage()
+{
+   echo "Usage: $0 {calibre_options...}"
+   echo $version_string
+   echo
+   echo "Submit a calibre job to a remote machine using the SGE compute grid"
+   echo "-h) Get the documentation"
+   echo "-x) debug"
+   echo "-v) verbose"
+   echo "-l) qsub attributes (-l qname=linux.q)"
+   exit 1
+}
+
+script_info()
+{
+   echo "Usage $0 {calibre_options}"
+   echo $version_string
+   cat << %EOF_HELP% -
+
+  While this script can be used standalone to launch a calibre job to the grid, it is
+  designed to be used within the calibre gui to enable remote execution of jobs.  It
+  does require that the target block be located on the network and that a rule deck
+  that has been customized for that block also exist.  The script does not run iclink
+  to generate a gds file for the block, since the calibre gui does this task, and the
+  users are experienced in running iclink,  it would just be extra fluff in the script.
+
+  I does handle the setup of the running enviromnent, since this is required for the
+  remote machine anyway.
+
+  To use the script standalone:
+      Qcalibre <calibre options>
+     To run calibre drc on a block called 'all_slots':
+        Rule deck = /com0/dtig/cd40_testing/im1a_scratch/artwork/_tij4_drc_
+        Qcalibre -drc -cb /com0/dtig/cd40_testing/im1a_scratch/artwork/_tij4_drc_
+
+  To use Qcalibre you will need to make sure that a network directory location is
+  specified in the Rules Pane under "Calibre-* Run Directory"
+
+  Then under the Run Control Pane:
+    a)Select the Remote Execution Tab
+    b)Select the "Run Calibre-* on remote"
+    c)Select the "cluster" option
+    d)Under the "Queuing Command" enter the following:
+         /sdg/bin/Qcalibre %o
+
+  This should be all the changes required to use Qcalibre.
+
+GENERAL GRID6 SETUP
+  Although this script can handle the case where a user has not setup their personal 
+  environment to handle grid jobs,  it is preferrable to set it up for each user.  This
+  allows users to kill jobs, locate status of running jobs and perform other grid tasks.
+
+  The setup is quite simple:  
+  Edit your .kshrc (or .bashrc) file and add the following clause to the file at some
+  point (doesn't have to be at the beginning of the file):
+
+    if [ -f /com0/grid6/default/common/settings.sh -a -z \"\$SGE_ROOT\" ]
+    then
+       #echo \"Setting up grid environment\"
+       . /com0/grid6/default/common/settings.sh
+    fi
+
+  Then either re-source your .kshrc file of start a new window to get an environment with
+  the changes in place.
+
+%EOF_HELP%
+}
+
+if [ $# -eq 0 ]
+then
+   script_info;
+   exit 1;
+fi
+
+if [ -z "$SGE_ROOT" ]
+then
+   echo "WARNING: User grid environment not setup.  Will use a local environment"
+   echo "  for this script.  You should setup your environment for grid, see the"
+   echo "  help page on this script for directions."
+   echo
+
+   if [ -f /com0/grid6/default/common/settings.sh -a -z "$SGE_ROOT" ]
+   then
+      #echo "Setting up grid environment"
+      . /com0/grid6/default/common/settings.sh
+   fi
+fi
+
+let local=0
+QOPTS=""
+
+for I in $*
+do
+   case "x$1" in
+   x-h)          script_info;                   exit 1;;
+   x-x)          let debug=1;                   shift 1;;
+   x-v)          let verbose=1;                 shift 1;;
+   x-local)      let local=1;                   shift 1;;
+   x-l)          
+      shift 1;
+      QOPTS="$1";
+      shift 1
+      ;;
+   x-\?)                                        usage;;
+   esac
+done
+
+if [ $# -lt 3 ] ; then
+   echo "Usage: $0 <calibre options>"
+   echo "  String for the calibre -gui Queuing command:"
+   echo "   $0 %o"
+   exit 1
+fi
+
+host=`uname -n | cut -d. -f1`
+
+eval $(sh -c '/sdg/bin/envy -t sh /sdg/lib/shell/calibre.setup')
+
+CALIBRE="$MGC_HOME/bin/calibre"
+runset=`echo $* | awk '{print $NF}'`
+#echo "Runset=$runset"
+rundir=`dirname $runset`
+
+#
+# run directory is embedded in the run deck specified by the calibre command line
+#
+
+if [ -d $rundir ] ; then
+	cd $rundir 
+else
+	echo
+	echo "$rundir is not a valid directory on this host. Exiting ..."
+	echo
+	exit 1
+fi
+
+MGC_CALIBRE_INTERACTIVE=1
+export MGC_CALIBRE_INTERACTIVE
+
+cmd="$CALIBRE $*"
+echo "Command line: $cmd"
+
+#
+# Determine the run mode from the calibre options.  This
+# will guide in steering the job onto the correct queue
+# and request the correct consumable
+#
+
+mode=""
+line=$*
+for I in $line
+do
+   case "x$I" in
+   x-drc)          mode="drc";;
+   x-spice)        mode="lvs"; hiermode=1;;
+   x-lvs)          mode="lvs";;
+   x-cb)           cbmode=1;;
+   x-hier)         hiermode=1;;
+   esac;
+done
+
+if [ -z $mode ]
+then
+   echo "Unknown mode set in calibre options"
+   exit 1
+fi
+
+if [ -n "$hiermode" ]
+then
+   echo "Mode=$mode, Hierarchial Version"
+   case "$mode" in
+      drc)  feature="calibrehdrc";;
+      lvs)  feature="calibrehlvs";;
+   esac
+elif [ -n "$cbmode" ]
+then
+   echo "Mode=$mode, CB Version"
+   case "$mode" in
+      drc)  feature="calibredrc";;
+      lvs)  feature="calibrelvs";;
+   esac
+else
+   echo "Mode=$mode, flat"
+   case "$mode" in
+      drc)  feature="calibredrc";;
+      lvs)  feature="calibrelvs";;
+   esac
+fi
+
+echo "Feature Selected = $feature"
+
+if [ -n "$QOPTS" ]
+then
+   QOPTS="-hard -l $feature=1,$QOPTS"
+else
+   QOPTS="-hard -l $feature=1"
+fi
+
+if [ -z "$JOB_ID" ]
+then
+   echo "start Qcalibre: "  >> /com/red/Qcalibre.log
+   echo "   Qcalibre `date`,`whoami`, Jobid unset, rundir=$rundir" >> /com/red/Qcalibre.log
+   echo $rundir | egrep -q "^/disc"
+   if [ $? -eq 0 ]
+   then
+      newdir=`echo $rundir | sed 's/^\/disc//'`
+      echo "  ... patching rundir for $rundir to $newdir" >> /com/red/Qcalibre.log
+      if [ ! -d "$newdir" ]
+      then
+         echo "  ... error in patching directory name!"  >> /com/red/Qcalibre.log
+      fi
+      rundir=$newdir
+   fi
+   if [ ! -d "$rundir" ]
+   then
+      echo "Cannot reach run directory: $rundir"
+      exit 1
+   fi
+   LOGFILE="$rundir/Qcalibre.$$"
+   if [ $local -eq 1 ]
+   then
+      $cmd
+   else
+      echo "qsub -o $LOGFILE -q server.q $QOPTS $0 $*"
+      echo "   qsub command line: qsub -o $LOGFILE -q server.q $QOPTS $0 $*" >> /com/red/Qcalibre.log
+      qsub -o $LOGFILE -q server.q $QOPTS $0 $*
+      if [ $? -ne 0 ]
+      then
+         echo "An error occurred during the Calibre run";
+         cal_error=1
+      fi
+      if [ ! -f $LOGFILE ]
+      then 
+         echo "Cannot access the remote job logfile: $LOGFILE"
+         exit 1
+      fi
+
+      cat $LOGFILE
+
+      rm -f $LOGFILE
+   fi
+   echo "end Qcalibre on `uname -n`" >> /com/red/Qcalibre.log
+else
+   echo "   Start remote run:"
+   echo "   Qcalibre Date=`date`, User=`whoami`, Run_Host=`uname -n`" >> /com/red/Qcalibre.log
+   echo "      Jobid=$JOB_ID, rundir=$rundir" >> /com/red/Qcalibre.log
+   echo "Calibre Job Running on: "`uname -snr`
+   $cmd
+fi
+
+if [ -n "$cal_error" ]
+then
+   exit 1
+fi
+
+exit 0
+

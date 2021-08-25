@@ -1,0 +1,1048 @@
+#!/bin/ksh
+# Name:     make_valid.fem
+# Version:  $Header:$
+# Date:     23 April, 1997
+# Modified: Tue Feb  9 10:11:25 MST 1999
+# Author:   Floyd Moore
+#
+# Synopsis: This script was leveraged from the Cuda make_valid script to
+#      automate some lengthy tasks for blocks.  The script automatically
+#      will run:
+#      1 - bippy -v
+#      2 - make_eval -a
+#      3 - make_drc
+#      4 - make_rcliter
+#      5 - make_gds
+#          
+#      if -awsim specified
+#      3 - bozo_check
+#      4 - make_awsim -m sch
+#
+# Usage:    make_valid.fem <blockname>
+#####################################
+#
+
+logfile="/net/hpesfem/home/red/mako/my_valid_info.db"
+version_string='Version: \$Revision:\$'
+
+usage()
+{
+   echo "**************** Floyd's Block Validator ***************"
+   echo
+   echo "  Make_valid.fem is a 'wrapper' only.  It dones not re-implement"
+   echo "  any of the tools or try to check the timstamps of the targets!"
+   echo "  If any tool fails,  run the specific tool as described in the"
+   echo "  failing make_valid.fem message."
+   echo
+   echo "Usage: $0 {options...} <blockname>"
+   echo $version_string
+   echo
+   echo "Normal Options:"
+   echo "    -a         : Turn on awsim checks"
+   echo "    -b         : Abbreviated Bippy check."
+   echo "    -q         : Turn off most stdout reporting"
+   echo "    -remote    : force drc and gds to use taskbroker (Tsub...)"
+   echo "    -local     : force drc and gds run localally."
+   echo "    -s         : print summary report if exists"
+   echo "    -v         : Turn on verbose mode"
+   echo "    -x         : Turn on debugging information"
+   echo "    -F         : Continue on error."
+   echo
+   echo " Controls to turn on/off certain checks..."
+   echo "   -nosch    : don't run schematic checks (including compare)."
+   echo "   -noart    : don't run artwork checks (including compare)."
+   echo "   -norcl    : don't run make_rcliter."
+   echo "   -nogds    : don't run make_gds."
+   echo "   -nondrc   : don't run make_ndrc."
+   echo "   -pmill    : run pmill."
+   echo "   -noreport : don't build extra reports in block directory (is rcll)."
+   echo 
+   exit 1
+}
+
+########################
+# Define KSH functions #
+########################
+
+function report
+{
+   if [ $quiet -eq 0 ]
+   then
+      echo $*
+   fi
+}
+
+function error_trap
+{
+   if [ $run_on_error -ne 0 ]
+   then
+      let run_errors=$run_errors+1
+      if [ $verbose -eq 1 ]
+      then
+         echo "Validate step failed.  run_on_error set continuing... "
+      fi
+      return
+   else
+      terminate $1
+   fi
+}
+
+function terminate
+{
+   rm -f /tmp/*.$$
+
+   if [ $1 -eq 0 ]
+   then
+      if [ $quiet -eq 1 ]
+      then
+       echo "successful"
+      else
+         echo "Validate $blockname Sucessful."
+      fi
+      exit 0
+   else
+      echo "\nValidate $blockname Failed."
+      if [ -f "$blockpath/block_valid" ]
+      then
+         rm -f $blockpath/block_valid
+      fi
+      if [ $debug -ne 0 ]
+      then
+         echo "Exit Status: $1"
+      fi
+      exit $1
+   fi
+}
+
+function get_secs
+{
+   time=`date +%X`
+   let s=`echo $time | awk -F: '{print $1*3600+$2*60+$3}' - `
+   echo $s
+   return $s
+}
+
+function check_lockstatus
+{
+   if [ $verbose -eq 1 ]
+   then
+     echo "Checking $1 locks...\c"
+   fi
+   cb_sem -n $1 : > /dev/null 2>&1
+   if [ $? -ne 0 ]
+   then
+     echo "Block's $1 rep is locked"
+     terminate 1
+   else
+     if [ $verbose -eq 1 ]
+     then
+        echo "clear"
+     fi
+     return 0
+   fi
+}
+
+function run_tool
+{
+   start_tool=`get_secs`
+   if [ $remote -eq 1 ]
+   then
+      echo "Running (remote) $1...\c"
+
+      Tsub -w $1 $blockname > /dev/null 2>&1
+      status=$?
+   else
+      if [ $quiet -eq 0 ]
+      then
+         echo "Running (local) $1...\c"
+      fi
+      $1 $blockname > /dev/null 2>&1
+      status=$?
+   fi
+
+   if [ ! $status = 0 ]
+   then
+      if [ $quiet -eq 0 ]
+      then
+         echo "failed! Halted Validate process."
+      else
+         echo "\n$1 failed for block"
+      fi
+      echo "$1 failed" >> $blockpath/valid_summary
+      short_tool=`echo $1 | awk '{print $1}' -`
+      #context_help $short_tool
+      error_trap 1
+   else
+      if [ $quiet -eq 0 ]
+      then
+       echo "successful."
+      fi
+   fi
+   let end_tool=`get_secs`
+   let end_tool=$end_tool-$start_tool
+   echo "$1 complete, time=$end_tool" >> $blockpath/valid_summary
+   echo "$blockname:$user:'$1':$end_tool" >> $logfile
+
+}
+
+function clean_exit
+{
+   echo "Recieved Signal,  cleaning up"
+   rm -f /tmp/*.$$
+   exit 1
+}
+
+function touch_valid
+{
+   if [ $run_errors -eq 0 ]
+   then
+      if [ $debug -ne 0 ]
+      then
+       echo "touching repvalid flag: $blockpath/$1/rep_valid"
+      fi
+      let cnt=0
+      let update=1
+      touch $blockpath/$1/rep_valid
+      let update=`find $blockpath/$1 -newer $blockpath/$1/rep_valid -print | wc -l`
+      if [ $update -gt 0 ]
+      then
+         report " Waiting for files to become valid\c"
+      fi
+      while [ $update -gt 0 -a $cnt -lt 10 ]
+      do
+       if [ $debug -ne 0 -a $update -gt 0 ]
+       then
+          echo "\cFiles out of date:"
+          find $blockpath/$1 -newer $blockpath/$1/rep_valid -print
+       else 
+          report ".\c"
+       fi
+         touch $blockpath/$1/rep_valid
+       sleep 5
+       let update=`find $blockpath/$1 -newer $blockpath/$1/rep_valid -print | wc -l`
+       let cnt=$cnt+1
+      done
+      if [ $cnt -gt 0 ]
+      then
+      echo ""
+      fi 
+   else
+      if [ -f $blockpath/$1/rep_valid ]
+      then
+       rm -f $blockpath/$1/rep_valid
+      fi
+   fi
+}
+
+function parse_options
+{
+   echo $@ | tr -s " *" "\012" |
+   while read -r option
+   do
+      if [ $debug -eq 1 ]
+      then
+         echo "Processing Option: '$option'"
+      fi
+      case $option in
+      -x)          echo "Debug mode on"; debug=1;;
+
+      -V)          echo $version_string; 
+                   exit 1
+                   ;;
+
+      -q)          quiet=1;;
+
+      -datechk)    datechk=1;;
+
+      -F)          run_on_error=1;;
+
+      -b)	   full_bippy_check=0;;
+
+      -a)	   check_awsim=1;;
+       
+      -autoParts)  use_autoParts=1;;
+       
+      -cubby)      run_pmill=0;
+                   run_rcll=0;
+		   run_gds=1;
+		   run_ndrc=0;
+                   run_bozo_check=0;
+		   build_report=0;;
+
+      -local)      remote=0;;
+
+      -remote)     remote=1;;
+
+      -noart)      run_art=0;;
+
+      -nosch)      run_sch=0;;
+
+      -norcl)      run_rcll=0;;
+
+      -rcv)        run_rcv=1;;
+
+      -pmill)      run_pmill=1;;
+
+      -nopmill)    run_pmill=0;;
+
+      -nogds)      run_gds=0;;
+
+      -nondrc)     run_ndrc=0;;
+
+      -resreport)   build_report=1;;
+
+      -noreport)   build_report=0;;
+
+      -nobozo)	   run_bozo_check=0;;
+
+      -rcliter)    run_rcll=1;;
+
+      -options)    exit_after_options=1;;
+
+      -s)          report_summary=1;;
+
+      -v)          verbose=1;;
+
+      -?)          usage;;
+
+      -help)	   usage;;
+
+      -*)          echo "Invalid Argument: $option";   usage;;
+
+       *)          blockname=${option};;
+      esac
+   done
+   if [ $? -ne 0 ]
+   then
+     exit 1
+   fi
+}
+
+function context_help
+{
+   echo "make_valid found a problem in '$1':"
+   case $1 in
+      make_eval) echo "Try looking in sch_${ICPROCESS}/make_eval.log for hints"
+		 echo "to the problem.";;
+
+      make_drc)  echo "Try looking in art_${ICPROCESS}/make_drc.log, or look"
+		 echo " in art_${ICPROCESS}/verify_summary for hints to the problem."
+		 ;;
+
+      make_cmp)  
+		 echo "Try looking at cmp_cbmake or cmp_errors"
+		 echo " for hints to the problem."
+		 ;;
+
+      make_gds)  
+		 echo "Try looking in cmdrc_${ICPROCESS}/make_gds.log"
+		 echo " for hints to the problem."
+		 echo " (Remember that gds needs a DRC clean block to work,"
+		 echo "   or the block must be waivered)."
+		 ;;
+
+      za_check)
+	echo "The za_check tool found some bad structures in the gds."
+	echo "   Try running 'za_check -g <block_name> to get the names"
+	echo "     of the offending sub_blocks and then..."
+	echo "   Try running 'za_check -t <sub_block_name> to get the "
+	echo "     actual piglet coordinates of the failing structures." 
+	 ;;
+
+   esac
+}
+
+##########################################
+#     Parse Arguements from command line #
+##########################################
+
+let run_errors=0
+trap "clean_exit" QUIT
+trap "clean_exit" HUP
+trap "clean_exit" TERM
+trap "clean_exit" INT
+
+if [ $# -eq 0 ] 
+then
+   usage
+   exit 1
+fi
+
+# set globals
+let changed=0
+let quiet=0
+let report_summary=0
+let debug=0
+let verbose=0
+let remote=0
+let exit_after_options=0
+let check_awsim=0
+let full_bippy_check=1
+let run_on_error=0
+let run_art=1
+let run_sch=1
+let run_rcll=1
+let run_rcv=0
+let run_pmill=0
+let run_gds=1
+let run_ndrc=1
+let run_bozo_check=1
+let art_valid=0
+let sch_valid=0
+let leaf_mode=0
+let build_report=0
+let dont_touch_valid=0
+let use_autoParts=0
+let datechk=0;
+user=`whoami`
+mtype=`uname -a | cut -d" " -f5`
+
+if [ $1 = "-?" -o $1 = "-help" ]
+then
+   usage;
+   terminate 1
+fi
+
+if [ $mtype = "9000/735" ]
+then
+   remote=1
+fi
+
+parse_options $@
+
+if [ ! -z "$CBMAKE_NO_STOP" ]
+then
+   echo "Setting run_on_error based on CBMAKE_NO_STOP=TRUE"
+   run_on_error=1
+fi
+
+blockpath=`get_dir $blockname`
+if [ -z "$blockpath" ]
+then
+   echo "Bad blockname: $blockname"
+   terminate 1
+fi
+if [ ! -d $blockpath ]
+then
+   echo "Cannot locate block $blockname"
+   terminate 1
+fi
+
+if [ -f $blockpath/art_${ICPROCESS}/piece_only_flag ]
+then
+   echo "Block is only valid as an artwork piece.  Cannot validate"
+   terminate 0
+fi
+
+if [ $exit_after_options -eq 1 ]
+then
+   terminate 0
+fi
+
+if [ ! -w $blockpath ]
+then
+   echo "User cannot write to block's directory: $blockpath"
+   terminate 1
+fi
+
+script=`basename $0`
+if [ $quiet -eq 1 ]
+then
+   echo "$script $blockname ...\c"
+else
+   echo "$script $blockname ..."
+   echo "   $version_string"
+   echo "   Verify mode=${ICPROCESS}"
+   echo "---------------------------------"
+fi
+
+###
+### Check if block has schematic
+###
+sch_exists=0
+if [ -f $blockpath/sch_${ICPROCESS}/piglet.db ]
+then
+   sch_exists=1
+else
+   if [ $quiet -eq 1 ]
+   then
+      echo "[No Schematic]...\c"
+   fi
+fi
+
+###
+### Check if block has a view
+###
+sym_exists=0
+if [ -f $blockpath/sym_${ICPROCESS}/piglet.db ]
+then
+   sym_exists=1
+else
+   if [ $quiet -eq 1 ]
+   then
+      echo "[No Symbol]...\c"
+   fi
+fi
+
+###
+### Check if block has artwork
+###
+art_exists=0
+if [ -f $blockpath/art_${ICPROCESS}/piglet.db ]
+then
+   art_exists=1
+else
+   if [ $quiet -eq 1 ]
+   then
+      echo "[No Artwork]...\c"
+   fi
+fi
+
+if [ -f $blockpath/art_${ICPROCESS}/inst_hier -a ! -s $blockpath/art_${ICPROCESS}/inst_hier ]
+then
+   report "Cell is a leaf..."
+   leaf_mode=1
+fi
+
+rm -f /tmp/*.$$
+
+############################################################
+#  Summary information
+############################################################
+if [ $report_summary -eq 1 ]
+then
+   if [ -f $blockpath/valid_summary ]
+   then
+      cat $blockpath/valid_summary
+   else
+      report "No summary data exists for block"
+   fi
+   terminate 0
+fi
+
+############################################################
+#                       Validate
+############################################################
+
+# Starting timestamp
+start_date=`date +%x-%X`
+date_match=`date +%j`
+
+if [ ! -f $blockpath/block_valid ]
+then
+   if [ $datechk -eq 1 ]
+   then
+      echo "Date checking not ran since block_valid file does not exist."
+      let datechk=0
+   fi
+fi
+if [ -f $blockpath/block_valid ]
+then
+  if [ $datechk -eq 1 ]
+  then
+     chk=`find ${blockpath} -name piglet.db -newer ${blockpath}/block_valid | wc -l`
+     if [ $chk -gt 0 ]
+     then
+         echo "Block is out-of-date.  Running checks"
+     else
+         echo "   block is still up-to-date w.r.t. piglet.db's not running checks."
+         exit 0
+     fi
+  fi
+  rm -f $blockpath/block_valid
+  rm -f $blockpath/valid_summary
+fi
+
+echo "Start make_valid $blockname at $start_date" > $blockpath/valid_summary
+
+   ###############
+   #  Bippy...   #
+   ###############
+report "Checking Bippy...\c"
+if [ $full_bippy_check -eq 1 ]
+then
+   bippy -v $blockname
+   if [ $? != 0 ]
+   then
+      if [ $quiet -eq 1 ]
+      then
+         echo "\nBippy failed"
+      else
+         echo "failed"
+      fi
+      echo "Validate aborted due to bm.db errors"
+      echo "  all blocks must ONLY point at Piranha"
+      echo "Errors found in block's bippy ('bippy -v')." >> $blockpath/valid_summary
+      terminate 1
+   else
+      report "successful"
+      echo "Bippy is valid" >> $blockpath/valid_summary
+   fi
+else
+   for rep in art sch sym
+   do
+      report "$rep...\c"
+      bippy -l -r ${rep}_${ICPROCESS} $blockname > /dev/null
+      if [ $? != 0 ]
+      then
+         if [ $quiet -eq 1 ]
+         then
+            echo "\nBippy failed"
+         else
+            echo "failed"
+         fi
+         echo "Validate aborted due to bm.db errors"
+         echo "  all blocks must ONLY point at Piranha" 
+         echo "Errors found in block's bippy ('bippy -l -r $rep_${ICPROCESS}')." >> $blockpath/valid_summary
+         terminate 1
+      fi
+   done
+   report "successful"
+   echo "Bippy is valid" >> $blockpath/valid_summary
+fi
+
+   ###############
+   #  Schematic  #
+   ###############
+
+let sch_changed=0
+let sch_exists=0
+let sch_valid=0
+if [ $run_sch -eq 1 ]
+then
+   if [ -f $blockpath/sch_${ICPROCESS}/piglet.db ]
+   then
+      let sch_exists=1
+      check_lockstatus $blockpath/sch_${ICPROCESS}
+      let sch_changed=1
+      rm -f $blockpath/sch_${ICPROCESS}/rep_valid
+      
+      if [ -f $blockpath/sym_${ICPROCESS}/piglet.db ]
+      then
+         let sym_exists=1
+         check_lockstatus $blockpath/sym_${ICPROCESS}
+         let sym_changed=1
+         rm -f $blockpath/sym_${ICPROCESS}/rep_valid
+
+         run_tool "make_evalv "
+      fi
+
+      #####################
+      # Run the evaluator #
+      #####################
+      run_tool "make_eval -a"
+
+      ##################################
+      # Evaluage the schg if it exists #
+      ##################################
+      if [ -f $blockpath/schg/piglet.db ]
+      then
+	 run_tool "make_evalg"
+      fi
+
+      ##################
+      # Run Bozo check #
+      ##################
+      if [ $run_bozo_check -eq 1 ]
+      then
+         if [ -f ${blockpath}/lconn_${ICPROCESS}/block_hier ]
+         then
+            fets=`egrep "ZENH0|ZENHD0|ZPENH0|ZPENHD0" ${blockpath}/lconn_${ICPROCESS}/block_hier | wc -l`
+	    if [ $fets -eq 0 -o -r ${blockpath}/schg/piglet.db ]
+	    then
+               run_tool "bozo_check "
+	    else
+	       echo "FETS found in lconn_xx/block_hier file"
+	    fi
+         else
+	    echo "No lconn_${ICPROCESS}/block_hier found!"
+         fi
+      fi
+
+      # mark sch valid
+      touch_valid sch_${ICPROCESS}
+      let sch_valid=1
+      echo "   schematic is valid" >> $blockpath/valid_summary
+   else
+      if [ ! -d $blockpath/sch_${ICPROCESS} ]
+      then
+         echo "No Schematic Found" >> $blockpath/valid_summary
+      else 
+         echo "Wierd Conditions with schematic in validate script" >> $blockpath/valid_summary      
+         echo "  No piglet.db found for schematic, but a sch_${ICPROCESS} directory exists?" >> $blockpath/valid_summary
+      fi
+   fi
+else
+   report "Schematic not checked for block"
+   echo "Block Schematic not checked" >> $blockpath/valid_summary
+fi
+
+   #############
+   #  Artwork  #
+   #############
+
+let art_changed=0
+let art_exists=0
+let art_valid=0
+if [ $run_art -eq 1 ]
+then
+   if [ -f $blockpath/art_${ICPROCESS}/piglet.db ]
+   then
+      let art_exists=1
+      check_lockstatus $blockpath/art_${ICPROCESS}
+      let art_changed=1
+      rm -f $blockpath/art_${ICPROCESS}/rep_valid
+
+      #DRC artwork
+      if [ $use_autoParts -eq 0 ]
+      then
+         run_tool "make_drc "
+         status=`grep "DRC finished and passed" $blockpath/art_${ICPROCESS}/drc_log | wc -l`
+      else
+         run_tool "autoParts -M 5 make_drc"
+         status=`grep "DRC finished and passed" $blockpath/art_${ICPROCESS}/drc_log | wc -l`
+      fi
+      if [ $status -ne 1 ]
+      then
+         echo "Drc has errors, check verify_summary results."
+         error_trap 1
+      fi
+
+      # log vm use of the drc task
+      if [ -f $blockpath/drc_${ICPROCESS}/drc_log ]
+      then
+         vm=`grep "VMuse" $blockpath/drc_${ICPROCESS}/drc_log | \
+	    tail -1 | awk '{print $NF}' -`
+         echo "$blockname:$user:'make_drc Vmuse':$vm" >> $logfile
+      fi
+
+      #mark artwork as valid
+      touch_valid art_${ICPROCESS}
+      let art_valid=1
+      echo "  Artwork is valid" >> $blockpath/valid_summary
+   else
+      if [ ! -d $blockpath/art_${ICPROCESS} ]
+      then
+         echo "No Artwork Found" >> $blockpath/valid_summary
+      else
+         echo "Wierd Conditions with Artwork in validate script." >> $blockpath/valid_summary
+         echo "  An art_${ICPROCESS} directory exists, but it does not have a piglet.db?" >> $blockpath/valid_summary
+      fi
+   fi
+fi
+
+
+###
+### Only do these if we have artwork
+###
+if [ $art_valid -eq 1 ]
+then
+   ###################
+   #  Check Waivers  #
+   ###################
+   if [ -f $blockpath/art_${ICPROCESS}/blk_waiver_flag ]
+   then
+      report "Block has been waivered"
+      echo "Artwork has been Waivered" >> $blockpath/valid_summary
+   fi
+
+   ###################
+   #  Check Ports    #
+   ###################
+   run_tool "port_check -a "
+   if [ $sym_exists -eq 1 ]
+   then
+      run_tool "encap_check "
+   fi
+
+   ##################
+   #  make_rcliter  #
+   ##################
+
+   rcll_changed=0
+   rcll_valid=0
+
+   if [ $run_rcll -eq 1 ]
+   then
+      if [ $art_changed -eq 1 -o ! -d $blockpath/rcll_${ICPROCESS} ]
+      then
+         check_lockstatus $blockpath/art_${ICPROCESS}
+         check_lockstatus $blockpath/rcll_${ICPROCESS}
+
+         run_tool "make_rcliter "
+         status=`egrep "^rcliter for .* is valid" $blockpath/rcll_${ICPROCESS}/make_rcliter.log | wc -l`
+         if [ $status -ne 1 ]
+         then
+             echo "make_rcliter has errors, check make_rcliter.log for hints."
+             error_trap 1
+         fi
+
+         #mark rcliter as valid
+         touch_valid rcll_${ICPROCESS}
+         rcll_valid=1
+         echo "  RCliter has been validated" >> $blockpath/valid_summary
+
+	 ###################################
+	 # Crosscheck the resistor extract #
+	 ###################################
+	 if [ $build_report -eq 1 ]
+	 then
+	    run_tool "make_res_err "
+
+	    show_res $blockname > $blockpath/rcll_${ICPROCESS}/show_res.log 2>&1
+         fi
+
+         # run a2o
+         #   run_tool "a2o "
+      else
+         if [ ! -d $blockpath/rcll_${ICPROCESS} ]
+         then
+            echo "No rcliter Found" >> $blockpath/valid_summary
+         elif [ $art_changed -eq 0 ]
+         then
+            echo "rcliter not ran since artwork not changed" >> $blockpath/valid_summary
+         else 
+            echo "Wierd Conditions with Artwork/rcliter in validate script." >> $blockpath/valid_summary
+         fi
+      fi
+   fi
+
+   ##################
+   #  make_rcv      #
+   ##################
+
+   rcv_changed=0
+   rcv_valid=0
+
+   if [ $run_rcv -eq 1 ]
+   then
+      if [ $art_changed -eq 1 -o ! -d $blockpath/rcv_${ICPROCESS} ]
+      then
+         check_lockstatus $blockpath/art_${ICPROCESS}
+         check_lockstatus $blockpath/rcv_${ICPROCESS}
+
+         run_tool "make_rcv "
+         status=`egrep "^rcv for .* is valid" $blockpath/rcv_${ICPROCESS}/make_rcv.log | wc -l`
+         if [ $status -ne 1 ]
+         then
+             echo "make_rcv has errors, check make_rcv.log for hints."
+             error_trap 1
+         fi
+
+         #mark rcv as valid
+         touch_valid rcv_${ICPROCESS}
+         rcv_valid=1
+         echo "  RCv has been validated" >> $blockpath/valid_summary
+
+      else
+         if [ ! -d $blockpath/rcv_${ICPROCESS} ]
+         then
+            echo "No rcv Found" >> $blockpath/valid_summary
+         elif [ $art_changed -eq 0 ]
+         then
+            echo "rcv not ran since artwork not changed" >> $blockpath/valid_summary
+         else 
+            echo "Wierd Conditions with Artwork/rcv in validate script." >> $blockpath/valid_summary
+         fi
+      fi
+   fi
+
+   #############
+   #  Compare  #
+   #############
+
+   # Run compare if we have both artwork and schematics
+   if [ $art_valid -eq 1 -a $sch_valid -eq 1 -a \
+      \( $sch_changed -eq 1 -o $art_changed -eq 1 \) ]
+   then
+      run_tool "make_cmp "
+   fi
+
+   ################
+   #  Make_GDS  #
+   ################
+
+   gds_changed=0
+
+   if [ $run_gds -eq 1 ]
+   then
+      if [ $art_changed -eq 1 -o ! -d $blockpath/cmdrc_${ICPROCESS} ]
+      then
+         check_lockstatus $blockpath/art_${ICPROCESS}
+         check_lockstatus $blockpath/cmdrc_${ICPROCESS}
+
+         # Create GDS
+         gds_changed=1
+
+         run_tool "make_gds "
+         status=`grep "gds.hier generation complete" $blockpath/cmdrc_${ICPROCESS}/gds_log | wc -l`
+         if [ $status -ne 1 ]
+         then
+             echo "make_gds has errors, check make_gds.log for hints."
+             error_trap 1
+         fi
+
+         #mark gds as valid
+         touch_valid cmdrc_${ICPROCESS}
+         echo "  GDS has been validated" >> $blockpath/valid_summary
+      else
+         if [ ! -d $blockpath/cmdrc_${ICPROCESS} ]
+         then
+            echo "No GDS Found" >> $blockpath/valid_summary
+         elif [ $art_changed -eq 0 ]
+         then
+            echo "GDS not ran since artwork not changed" >> $blockpath/valid_summary
+         else 
+            echo "Wierd Conditions with Artwork/GDS in validate script." >> $blockpath/valid_summary
+         fi
+      fi
+
+      ###################################
+      #  Check GDS file for problems    #
+      ###################################
+      #if [ ! -f $blockpath/cmdrc_${ICPROCESS}/gds.hier ]
+      #then
+      #   echo "Cannot locate gds file to check"
+      #else
+#	 let save=$run_on_error
+#	 let run_on_error=1
+#         run_tool "za_check -q -g "
+#	 let run_on_error=$save
+#      fi
+
+      ################
+      #  Make_ndrc  #
+      ################
+
+      if [ $run_ndrc -eq 1 ]
+      then
+	 check_lockstatus $blockpath/art_${ICPROCESS}
+         check_lockstatus $blockpath/cmdrc_${ICPROCESS}
+
+         run_tool "make_ndrc "
+         status=`grep 'Runset drc is good.' $blockpath/ndrc_${ICPROCESS}/drc.log | wc -l`
+         if [ $status -ne 1 ]
+         then
+             echo "make_ndrc has errors, check drc.log for hints."
+             let run_errors=$run_errors+1
+	     # ignorring ndrc errors for the time being...
+             #error_trap 1
+         fi
+      fi
+   fi
+
+   ##############
+   #  Pathmill  #
+   ##############
+
+   if [ $rcll_valid -eq 1 -a $run_pmill -eq 1 ]
+   then
+      if [ $leaf_mode -eq 1 ]
+      then
+         cd $blockpath/epic
+         run_tool "leaf_panther "
+      elif [ -x $blockpath/epic/doit.pmill ]
+      then
+         cd $blockpath/epic
+	 echo "Running the doit.pmill script in: ${blockpath}/epic"...
+         start_tool=`get_secs`
+         ./doit.pmill
+         let end_tool=`get_secs`
+         let end_tool=$end_tool-$start_tool
+         echo "doit.pmill complete, time=$end_tool" >> $blockpath/valid_summary
+         echo "$blockname:$user:'doit.pmill':$end_tool" >> $logfile
+      fi
+   elif [ $rcll_valid -eq 0 -a $run_pmill -eq 1 -a -x $blockpath/epic/doit.pmill ]
+   then
+      echo "Not running pathmill due rcliter not being valid"
+      echo "Not running pathmill due rcliter not being valid" >> $blockpath/valid_summary
+   fi
+
+# End Artwork_exist clause
+else
+   report "No artwork to check for block"
+   echo "Block does not have any artwork" >> $blockpath/valid_summary
+fi
+
+   ################
+   #  Make_Awsim  #
+   ################
+# Run make_awsim 
+if [ $check_awsim -ne 0 ]
+then
+   sch_awsim_ok=0
+   art_awsim_ok=0
+
+   if [ $sch_valid -eq 1 ]
+   then
+      run_tool "awformat -f -m sch "
+      run_tool "awcheck -z "
+      sch_awsim_ok=1
+   else
+      report "Schematic Awsim is up-to-date wrt schematic"
+      echo "  Schematic Awsim is up-to-date" >> $blockpath/valid_summary
+      sch_awsim_ok=1
+   fi
+
+   if [ $art_valid -eq 1 ]
+   then
+      run_tool "make_awsim -f -mart "
+      art_awsim_ok=1
+   else
+      report "Artwork Awsim is up-to-date wrt artwork"
+      echo "  Artwork Awsim is up-to-date" >> $blockpath/valid_summary
+      art_awsim_ok=1
+   fi
+fi
+
+   ##########
+   #  Misc  #
+   ##########
+
+report "Total Errors for $blockname: $run_errors"
+echo "Total Errors: $run_errors" >> $blockpath/valid_summary
+if [ $dont_touch_valid -eq 1 ]
+then
+   echo "not marked valid"
+   echo "Option set caused block to not be marked as valid" >> $blockpath/valid_summary
+fi
+
+if [ $dont_touch_valid -eq 0 -a $run_errors -eq 0 ]
+then 
+   touch $blockpath/block_valid
+   let cnt=0
+   let update=1
+   let update=`find $blockpath -newer $blockpath/block_valid -print | wc -l`
+      if [ $update -gt 0 ]
+      then
+         report " Waiting for files to become valid\c"
+      fi
+      while [ $update -gt 0 -a $cnt -lt 10 ]
+      do
+       if [ $debug -eq 1 -a $update -gt 0 ]
+       then
+          echo "\cFiles out of date:"
+          find $blockpath/$1 -newer $blockpath/$1/rep_valid -print
+       else 
+          report ".\c"
+       fi
+         touch $blockpath/block_valid
+       sleep 5
+       let cnt=$cnt+1
+       let update=`find $blockpath -newer $blockpath/block_valid -print | wc -l`
+      done
+      if [ $cnt -gt 0 ]
+      then
+      echo ""
+      fi
+fi
+
+echo "End of Validate: "`date` >> $blockpath/valid_summary
+echo "make_valid.fem Complete at "`date`
+#echo "   Review the following files for possible Errors/Warnings:"
+#echo "   make_eval -a:   sch_${ICPROCESS}/make_eval.log"
+#echo "   make_drc:       drc_${ICPROCESS}/verify_summary, drc_${ICPROCESS}/piglet.arc"
+#echo "   make_cmp:       cmp_errors, and cmp_cbmake"
+#echo "   make_gds:       cmdrc_${ICPROCESS}/make_gds.log"
+#echo "   za_check:       re-run using 'za_check -t <blockname>'"
+terminate $run_errors

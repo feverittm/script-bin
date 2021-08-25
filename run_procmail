@@ -1,0 +1,39 @@
+#!/bin/sh
+
+if [ -z "$LOGNAME" -o -z "$HOME" ]
+then
+   echo "Bad environment settings for either HOME or LOGNAME"
+   exit 1
+fi
+
+ORGMAIL=/var/mail/$LOGNAME
+
+if [ -f $HOME/Mail/msgid.cache ]
+then
+   echo "moving cache out of the way ... "
+   mv $HOME/Mail/msgid.cache /tmp/save
+   save_cache=1
+fi
+
+if cd $HOME &&
+ test -s $ORGMAIL &&
+ lockfile -r0 -l1024 .newmail.lock 2>/dev/null
+then
+  trap "rm -f .newmail.lock" 1 2 3 13 15
+  umask 077
+  lockfile -l1024 -ml
+  cat $ORGMAIL >>.newmail &&
+   cat /dev/null >$ORGMAIL
+  lockfile -mu
+  formail -s procmail <.newmail &&
+   rm -f .newmail
+  rm -f .newmail.lock
+fi
+
+if [ -n "$save_cache" ]
+then
+   echo "moving cache back ... "
+   mv /tmp/save $HOME/Mail/msgid.cache 
+fi
+exit 0
+
