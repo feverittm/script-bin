@@ -1,8 +1,10 @@
 squirrel-sql-3.7.1/*
 schemaSpyGUI/*
 __pycache__/*
+awscli-bundle/*
 instantclient_11_2/*
 set_profile_password.py
 *.jar
+*.zip
 secrets.py
 authly
