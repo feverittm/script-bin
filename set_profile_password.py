@@ -47,7 +47,7 @@ sslverification = True
 
 # idpentryurl: The initial url that starts the authentication process.
 idpentryurl_dev = 'https://login-itg.external.hp.com/idp/startSSO.ping?PartnerSpId=AWS_redshift'
-idpentryurl_itg = 'https://login-itg.external.hp.com/idp/startSSO.ping?PartnerSpId=AWS_redshift_dataos_prod'
+idpentryurl_itg = 'https://login-itg.external.hp.com/idp/startSSO.ping?PartnerSpId=AWS_Redshift_dataos_prod'
 
 ##########################################################################
 # The program options and help file
